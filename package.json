@@ -1,0 +1,40 @@
+{
+  "name": "@phoenixkey/sdk",
+  "version": "0.1.0",
+  "description": "Identity & auth SDK for the MagicLamp ecosystem",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@microsoft/fetch-event-source": "^2.0.1"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0"
+  },
+  "keywords": ["phoenixkey", "magiclamp", "cardano", "did", "identity", "auth", "web3"],
+  "author": "MagicLamp Network",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PhoenixKeyDID/PhoenixKey-SDK"
+  },
+  "homepage": "https://docs.phoenixkey.me"
+}
