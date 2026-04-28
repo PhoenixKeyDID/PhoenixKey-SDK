@@ -1,4 +1,4 @@
-# @phoenixkey/sdk
+# @phoenixkeydid/phoenixkey-sdk
 
 SDK tích hợp danh tính và xác thực cho các ứng dụng trong hệ sinh thái **MagicLamp**.
 

@@ -1,5 +1,5 @@
 {
-  "name": "@phoenixkey/sdk",
+  "name": "@phoenixkeydid/phoenixkey-sdk",
   "version": "0.1.0",
   "description": "Identity & auth SDK for the MagicLamp ecosystem",
   "main": "./dist/index.js",
