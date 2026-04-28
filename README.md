@@ -1,73 +1,99 @@
 # @phoenixkeydid/phoenixkey-sdk
 
-SDK tích hợp danh tính và xác thực cho các ứng dụng trong hệ sinh thái **MagicLamp**.
+Identity & authentication SDK for applications in the **MagicLamp** ecosystem.
 
-Người dùng đăng nhập bằng **vân tay hoặc khuôn mặt** trên Aladin App — app của bạn nhận `session_token` và `user_did` mà không bao giờ chạm vào private key.
+Users sign in with **fingerprint or face** on the Aladin App — your app receives a `session_token` and `user_did` without ever touching a private key.
 
 **API Docs:** https://api.phoenixkey.me/docs  
-**Full Integration Guide:** https://docs.phoenixkey.me  
+**Full Integration Guide:** https://docs.phoenixkey.me
 
 ---
 
-## Cài đặt
+## Installation
 
-```bash
-npm install @phoenixkey/sdk
-# hoặc
-yarn add @phoenixkey/sdk
+This package is published on **GitHub Packages**, not the public npm registry.
+
+### 1. Get a GitHub Personal Access Token
+
+GitHub → Settings → Developer settings → Personal access tokens → Generate new token  
+Required scope: `read:packages`
+
+### 2. Configure npm to use the GitHub registry for our scope
+
+Add this to your project's `.npmrc` (or `~/.npmrc` for global):
+
+```
+@phoenixkeydid:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NPM_TOKEN}
 ```
 
-> **Yêu cầu:** `@microsoft/fetch-event-source` được cài tự động như dependency.
+Then export the token in your shell or CI environment:
+
+```bash
+export NPM_TOKEN=ghp_your_token_here
+```
+
+### 3. Install
+
+```bash
+npm install @phoenixkeydid/phoenixkey-sdk
+# or
+yarn add @phoenixkeydid/phoenixkey-sdk
+# or
+pnpm add @phoenixkeydid/phoenixkey-sdk
+```
+
+> **Note:** `@microsoft/fetch-event-source` is installed automatically as a dependency.
 
 ---
 
 ## Quickstart
 
 ```typescript
-import { PhoenixKeyClient } from "@phoenixkey/sdk";
+import { PhoenixKeyClient } from "@phoenixkeydid/phoenixkey-sdk";
 
 export const phoenix = new PhoenixKeyClient({
-  apiKey:  process.env.NEXT_PUBLIC_PHOENIXKEY_API_KEY!, // Lấy tại api.phoenixkey.me/docs
+  apiKey:  process.env.NEXT_PUBLIC_PHOENIXKEY_API_KEY!, // From api.phoenixkey.me/docs
   appId:   "my-app",
-  appName: "My App",                                    // Hiển thị trong Aladin khi người dùng xác nhận
+  appName: "My App",                                    // Shown in Aladin during user approval
 });
 ```
 
 ---
 
-## Luồng đăng nhập
+## Login Flow
 
-Mọi đăng nhập đều đi qua 4 bước sau. SDK xử lý hết — app chỉ cần render QR và lắng nghe kết quả.
+Every login goes through the four steps below. The SDK handles everything — your app only needs to render a QR code and listen for the result.
 
 ```
-initSession()  →  render QR  →  openStream()  →  nhận "approved"
+initSession()  →  render QR  →  openStream()  →  receive "approved"
       │                              │
       └── temp_token (auth SSE) ─────┘
 ```
 
-### Bước 1 — Khởi tạo session
+### Step 1 — Initialize the session
 
 ```typescript
 const { session_id, temp_token, expires_at } = await phoenix.auth.initSession();
 
-// Tạo QR code từ deep link này (dùng thư viện qrcode hoặc tương đương):
+// Generate a QR code from this deep link (use `qrcode` or any equivalent library):
 const qrPayload = `aladin://auth?session=${session_id}&app=my-app`;
 ```
 
-> `temp_token` chỉ dùng để xác thực SSE stream và polling — **không phải** session token của người dùng.
+> `temp_token` is only used to authenticate the SSE stream and polling — it is **not** the user's session token.
 
-### Bước 2 — Mở SSE stream
+### Step 2 — Open the SSE stream
 
-SSE là cơ chế chính. Server sẽ push event khi người dùng quét vân tay trên Aladin.
+SSE is the primary mechanism. The server pushes an event when the user scans their fingerprint on Aladin.
 
 ```typescript
 const stream = phoenix.auth.openStream(session_id, temp_token, {
   onMessage: ({ data }) => {
     if (data.status === "approved") {
-      // Lưu session
+      // Persist the session
       phoenix.session.set(data.session_token, data.user_did);
 
-      // Lưu linked device — lần sau không cần QR nữa
+      // Persist the linked device — next login can skip QR
       if (data.linked_device_token) {
         phoenix.session.setLinkedDevice(data.linked_device_token);
       }
@@ -78,56 +104,56 @@ const stream = phoenix.auth.openStream(session_id, temp_token, {
 
     if (data.status === "rejected") {
       stream.close();
-      showError("Người dùng từ chối xác nhận");
+      showError("User rejected the request");
     }
   },
 
-  // Khi SSE reconnect, poll một lần để bắt event bị miss
+  // On reconnect, poll once to catch any missed events
   onReconnect: async () => {
     const status = await phoenix.auth.getStatus(session_id, temp_token);
-    // Xử lý status như onMessage
+    // Handle the status the same way as onMessage
   },
 });
 
 await stream.connect();
 
-// Cleanup khi component unmount
+// Cleanup on component unmount
 onDestroy(() => stream.close());
 ```
 
-### Bước 3 — Xử lý kết quả `approved`
+### Step 3 — Handle the `approved` result
 
 ```typescript
-// data từ onMessage khi status === "approved":
+// data from onMessage when status === "approved":
 // {
 //   status: "approved",
-//   session_token: "eyJhbG...",   // JWT 24h — dùng cho mọi API call tiếp theo
-//   user_did: "did:prism:abc...", // DID trên Cardano
-//   linked_device_token?: "eyJ..." // JWT 30d — dùng để skip QR lần sau
+//   session_token: "eyJhbG...",        // 24h JWT — used for all subsequent API calls
+//   user_did: "did:prism:abc...",      // Cardano DID
+//   linked_device_token?: "eyJ..."     // 30d JWT — used to skip QR next time
 // }
 ```
 
 ---
 
-## Lần đăng nhập thứ hai (Skip QR)
+## Returning Users (Skip QR)
 
-Khi `linked_device_token` được lưu từ lần trước, app có thể gửi push notification thẳng vào Aladin — người dùng chỉ cần bấm vào thông báo và quét vân tay, không cần mở app và quét QR.
+When a `linked_device_token` was saved from a previous login, the app can push a notification directly to Aladin — the user just taps the notification and scans their fingerprint, no need to open the app and scan a QR.
 
 ```typescript
 if (phoenix.session.hasLinkedDevice()) {
   await phoenix.auth.pushLinkedDevice();
-  // Vẫn mở SSE stream để nhận kết quả
-  const stream = phoenix.auth.openStream(session_id, temp_token, { ... });
+  // Still open the SSE stream to receive the result
+  const stream = phoenix.auth.openStream(session_id, temp_token, { /* ... */ });
 } else {
-  // Hiển thị QR như bình thường
+  // Show the QR code as usual
 }
 ```
 
 ---
 
-## Polling (fallback)
+## Polling (Fallback)
 
-Dùng khi SSE không khả dụng (một số proxy, React Native):
+Use this when SSE is unavailable (some proxies, React Native, etc.):
 
 ```typescript
 const poll = setInterval(async () => {
@@ -141,63 +167,63 @@ const poll = setInterval(async () => {
   if (status.status === "expired" || status.status === "rejected") {
     clearInterval(poll);
   }
-}, 2000); // poll mỗi 2 giây
+}, 2000); // poll every 2 seconds
 ```
 
 ---
 
-## Kiểm tra trạng thái đăng nhập
+## Checking Login State
 
 ```typescript
-// Guard route
+// Route guard
 if (!phoenix.isLoggedIn()) {
   router.push("/login");
 }
 
-// Lấy DID của người dùng hiện tại
+// Get the current user's DID
 const meta = phoenix.session.getSessionMeta();
 console.log(meta?.userDid); // "did:prism:abc123..."
 ```
 
 ---
 
-## Đăng xuất
+## Logout
 
 ```typescript
-phoenix.logout(); // Xoá session_token + linked_device_token khỏi localStorage
+phoenix.logout(); // Clears session_token + linked_device_token from localStorage
 router.push("/login");
 ```
 
 ---
 
-## Xử lý lỗi
+## Error Handling
 
-Mọi method đều throw `PhoenixKeyError` khi thất bại.
+Every method throws `PhoenixKeyError` on failure.
 
 ```typescript
-import { PhoenixKeyError } from "@phoenixkey/sdk";
+import { PhoenixKeyError } from "@phoenixkeydid/phoenixkey-sdk";
 
 try {
   await phoenix.auth.initSession();
 } catch (err) {
   if (err instanceof PhoenixKeyError) {
-    console.log(err.status);       // HTTP status (0 = network failure)
-    console.log(err.code);         // "session_expired", "invalid_api_key", ...
-    console.log(err.userMessageKey); // "errors.unauthorized", ... (dùng cho i18n)
+    console.log(err.status);          // HTTP status (0 = network failure)
+    console.log(err.code);            // "session_expired", "invalid_api_key", ...
+    console.log(err.userMessageKey);  // "errors.unauthorized", ... (i18n-friendly)
   }
 }
 ```
 
-### Bảng mã lỗi phổ biến
+### Common Error Codes
 
-| `err.code` | `err.status` | Ý nghĩa |
+| `err.code` | `err.status` | Meaning |
 |---|---|---|
-| `network_error` | `0` | Mất kết nối |
-| `invalid_api_key` | `401` | API key sai — kiểm tra config |
-| `session_not_found` | `404` | `session_id` không tồn tại — tạo session mới |
-| `session_expired` | `410` | QR hết hạn (5 phút) — tạo session mới |
-| `rate_limited` | `429` | Quá nhiều request — retry sau `err.details.retryAfter` giây |
-| `invalid_json` | — | Response từ server không phải JSON hợp lệ |
+| `network_error` | `0` | Connection lost |
+| `invalid_api_key` | `401` | Invalid API key — check your config |
+| `session_not_found` | `404` | `session_id` doesn't exist — create a new session |
+| `session_expired` | `410` | QR expired (5 minutes) — create a new session |
+| `rate_limited` | `429` | Too many requests — retry after `err.details.retryAfter` seconds |
+| `invalid_json` | — | Server response was not valid JSON |
 
 ---
 
@@ -209,76 +235,91 @@ try {
 new PhoenixKeyClient(config: PhoenixKeyConfig)
 ```
 
-| Option | Type | Mặc định | Mô tả |
+| Option | Type | Default | Description |
 |---|---|---|---|
-| `apiKey` | `string` | *bắt buộc* | API key từ api.phoenixkey.me/docs |
-| `appId` | `string` | *bắt buộc* | App ID đã đăng ký |
-| `appName` | `string` | *bắt buộc* | Tên hiển thị trong Aladin |
+| `apiKey` | `string` | *required* | API key from api.phoenixkey.me/docs |
+| `appId` | `string` | *required* | Registered app ID |
+| `appName` | `string` | *required* | Display name shown in Aladin |
 | `apiBaseUrl` | `string` | `https://api.phoenixkey.me` | — |
 | `sseBaseUrl` | `string` | `https://api.phoenixkey.me` | — |
 | `environment` | `"mainnet" \| "testnet"` | `"mainnet"` | — |
 
 ### `client.auth`
 
-| Method | Mô tả |
+| Method | Description |
 |---|---|
-| `initSession()` | Khởi tạo login session, trả `{ session_id, temp_token, challenge, expires_at }` |
-| `openStream(sessionId, tempToken, handlers)` | Mở SSE stream, trả `ResilientSSE` |
-| `getStatus(sessionId, tempToken)` | Poll trạng thái một lần, trả `LoginSessionStatus` |
-| `pushLinkedDevice()` | Gửi push notification (yêu cầu `hasLinkedDevice() === true`) |
+| `initSession()` | Initialize a login session. Returns `{ session_id, temp_token, challenge, expires_at }` |
+| `openStream(sessionId, tempToken, handlers)` | Open an SSE stream. Returns `ResilientSSE` |
+| `getStatus(sessionId, tempToken)` | Poll the status once. Returns `LoginSessionStatus` |
+| `pushLinkedDevice()` | Send a push notification (requires `hasLinkedDevice() === true`) |
 
 ### `client.session`
 
-| Method | Mô tả |
+| Method | Description |
 |---|---|
-| `set(token, userDid?)` | Lưu `session_token` (TTL đọc từ JWT exp, mặc định 24h) |
-| `getSessionToken()` | Trả token nếu còn hạn, `null` nếu hết hạn hoặc chưa đăng nhập |
-| `getSessionMeta()` | Trả `{ expiresAt, userDid }` |
-| `clearSession()` | Xoá session token |
-| `setLinkedDevice(token)` | Lưu `linked_device_token` (TTL 30d) |
-| `hasLinkedDevice()` | `true` nếu có linked device còn hạn |
-| `clearLinkedDevice()` | Xoá linked device token |
+| `set(token, userDid?)` | Store the `session_token` (TTL read from JWT `exp`, default 24h) |
+| `getSessionToken()` | Returns the token if valid, `null` otherwise |
+| `getSessionMeta()` | Returns `{ expiresAt, userDid }` |
+| `clearSession()` | Removes the session token |
+| `setLinkedDevice(token)` | Stores the `linked_device_token` (30d TTL) |
+| `hasLinkedDevice()` | `true` if a valid linked device exists |
+| `clearLinkedDevice()` | Removes the linked device token |
 | `isLoggedIn()` | Shortcut: `getSessionToken() !== null` |
-| `clearAll()` | Xoá cả session và linked device |
+| `clearAll()` | Clears both session and linked device |
 
 ### `client.isLoggedIn()`
 
-Shortcut của `client.session.isLoggedIn()`.
+Shortcut for `client.session.isLoggedIn()`.
 
 ### `client.logout()`
 
-Gọi `clearAll()` — xoá mọi dữ liệu PhoenixKey trong localStorage.
+Calls `clearAll()` — clears all PhoenixKey data from localStorage.
 
 ---
 
-## Endpoints thực tế (tham khảo)
+## Backend Endpoints (Reference)
 
-Tài liệu đầy đủ tại **https://api.phoenixkey.me/docs**
+Full documentation at **https://api.phoenixkey.me/docs**
 
-| Method | Path | Auth header bắt buộc |
+| Method | Path | Required Auth Headers |
 |---|---|---|
 | `POST` | `/auth/session/init` | `x-api-key` |
 | `GET` | `/auth/session/{id}/status` | `x-api-key` + `Authorization: Bearer <temp_token>` |
 | `GET` | `/auth/session/{id}/stream` | `x-api-key` + `Authorization: Bearer <temp_token>` |
 | `POST` | `/auth/session/push` | `x-api-key` + `Authorization: Bearer <linked_device_token>` |
 
-> **Lưu ý:** SDK tự động đính kèm `x-api-key` vào mọi request. Bạn không cần set header thủ công.
+> **Note:** The SDK automatically attaches `x-api-key` to every request. You don't need to set this header manually.
 
 ---
 
-## Ví dụ đầy đủ
+## Full Example
 
-Xem thư mục [`examples/nextjs/login-page.tsx`](./examples/nextjs/login-page.tsx) để có ví dụ hoàn chỉnh với Next.js 14 App Router.
+See [`examples/nextjs/login-page.tsx`](./examples/nextjs/login-page.tsx) for a complete Next.js 14 App Router example.
 
 ---
 
-## Liên quan
+## Related Repositories
 
 - **PhoenixKey Core:** `github.com/PhoenixKeyDID/PhoenixKey` — DID registry, smart contracts, Enclave
 - **PhoenixKey API:** `github.com/PhoenixKeyDID/PhoenixKey` → `apps/api/`
 - **PhoenixKey Database:** `github.com/PhoenixKeyDID/PhoenixKey-Database`
-- **Full Docs:** https://docs.phoenixkey.me
+- **Full Documentation:** https://docs.phoenixkey.me
 
 ---
 
-*© 2026 MagicLamp Network — PhoenixKey SDK v0.1.0*
+## License
+
+MIT © 2026 MagicLamp Network
+
+---
+
+## Aladin App (Required for Users)
+
+End users need the **Aladin App** installed to scan the QR codes your application displays. The app holds the user's keys in the device's Secure Enclave / TEE and signs all approval requests with biometrics.
+
+| Platform | Link |
+|---|---|
+| Android | [Google Play](https://play.google.com/store/apps/details?id=com.aladincontract.company) |
+| iOS | [App Store](https://apps.apple.com/app/id6737107665) |
+
+> Make sure your login UI links users to one of these stores when they don't have Aladin installed yet — for example, below the QR code: *"Don't have Aladin? Download for [Android](https://play.google.com/store/apps/details?id=com.aladincontract.company) or [iOS](https://apps.apple.com/app/id6737107665)."*
