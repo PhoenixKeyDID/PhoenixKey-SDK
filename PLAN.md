@@ -27,13 +27,13 @@
 
 ### 1.1. State hiện tại của các repo
 
-| Repo | Trạng thái | Branch chính | Note |
-|---|---|---|---|
-| **PhoenixKey-Database** (backend) | Deployed lên `api.phoenixkey.me`, vận hành OK | `remaster` | 23 endpoints, self-host Vault, fee wallet provisioned |
-| **PhoenixKey-SDK** (TS SDK) | v0.1.0, kiến trúc chỉnh chu nhưng KHÔNG tương thích với backend deployed | `main` | Sếp viết theo spec PhoenixKey_Interface.md, chưa test E2E |
-| **Phoenixkey-Interface** (web phoenixkey.me) | Branch `mock-login` — `/auth/session/*` flow đã được mock, real flow chưa test | `mock-login` | Types snake_case theo spec, chưa hit backend thật |
-| **PhoenixKey-Backend** (NestJS legacy) | Out of scope — đã được port hết logic sang Database repo Phase A→G | — | Reference cho Cardano logic |
-| **Aladin app mobile** (Tùng) | WIP | — | Không có repo trong workspace local |
+| Repo                                         | Trạng thái                                                                     | Branch chính | Note                                                      |
+| -------------------------------------------- | ------------------------------------------------------------------------------ | ------------ | --------------------------------------------------------- |
+| **PhoenixKey-Database** (backend)            | Deployed lên `api.phoenixkey.me`, vận hành OK                                  | `remaster`   | 23 endpoints, self-host Vault, fee wallet provisioned     |
+| **PhoenixKey-SDK** (TS SDK)                  | v0.1.0, kiến trúc chỉnh chu nhưng KHÔNG tương thích với backend deployed       | `main`       | Sếp viết theo spec PhoenixKey_Interface.md, chưa test E2E |
+| **Phoenixkey-Interface** (web phoenixkey.me) | Branch `mock-login` — `/auth/session/*` flow đã được mock, real flow chưa test | `mock-login` | Types snake_case theo spec, chưa hit backend thật         |
+| **PhoenixKey-Backend** (NestJS legacy)       | Out of scope — đã được port hết logic sang Database repo Phase A→G             | —            | Reference cho Cardano logic                               |
+| **Aladin app mobile** (Tùng)                 | WIP                                                                            | —            | Không có repo trong workspace local                       |
 
 ### 1.2. Spec dẫn đường
 
@@ -55,13 +55,13 @@
 
 3 nguồn lệch nhau, cần chốt 1:
 
-| Source | Convention | Ví dụ |
-|---|---|---|
-| Spec `PhoenixKey_Interface.md` (v1.4.3) | **snake_case** | `session_id`, `temp_token`, `session_token`, `user_did`, `linked_device_token` |
-| Backend code Java records (deployed) | **camelCase** | `sessionId`, `tempToken`, `sessionToken`, `userDid`, `linkedDeviceToken` |
-| Backend doc `API.md` | **camelCase** | match code |
-| Web `Phoenixkey-Interface/src/lib/auth.ts` | snake_case | match spec, KHÔNG match backend → Web hiện tại broken nếu un-mock |
-| SDK `src/types.ts` | snake_case | match spec, KHÔNG match backend → SDK fail mọi call |
+| Source                                     | Convention     | Ví dụ                                                                          |
+| ------------------------------------------ | -------------- | ------------------------------------------------------------------------------ |
+| Spec `PhoenixKey_Interface.md` (v1.4.3)    | **snake_case** | `session_id`, `temp_token`, `session_token`, `user_did`, `linked_device_token` |
+| Backend code Java records (deployed)       | **camelCase**  | `sessionId`, `tempToken`, `sessionToken`, `userDid`, `linkedDeviceToken`       |
+| Backend doc `API.md`                       | **camelCase**  | match code                                                                     |
+| Web `Phoenixkey-Interface/src/lib/auth.ts` | snake_case     | match spec, KHÔNG match backend → Web hiện tại broken nếu un-mock              |
+| SDK `src/types.ts`                         | snake_case     | match spec, KHÔNG match backend → SDK fail mọi call                            |
 
 **Recommend chốt:** **snake_case** (theo spec, theo Web Interface hiện có, theo SDK đã viết).
 
@@ -76,6 +76,7 @@ spring:
 Java records → tự serialize snake_case. Không phải sửa 30+ DTO. Update `API.md` để document snake_case (effort ~30 phút). Web Interface + SDK + Mobile (Tùng) tự nhiên match.
 
 **Risk khi chuyển:**
+
 - Postman collection hiện tại có sample body với mixed case — cần check + update (không ảnh hưởng path/header, chỉ JSON body)
 - Bất kỳ existing internal consumer (chưa có ngoài Web mock-login) — không ai khác đang gọi backend production nên risk thấp
 - API.md cần cập nhật toàn bộ JSON examples
@@ -83,6 +84,7 @@ Java records → tự serialize snake_case. Không phải sửa 30+ DTO. Update 
 ### 2.2. Response wrapping
 
 **Backend pattern**: tất cả endpoint trả `DataResponse<T>`:
+
 ```json
 { "code": 1000, "message": "Session created", "result": { "sessionId": "...", ... } }
 ```
@@ -90,16 +92,17 @@ Java records → tự serialize snake_case. Không phải sửa 30+ DTO. Update 
 **SDK fetcher** ([fetcher.ts:78](src/fetcher.ts)) + **Web apiFetch** ([api.ts:124](Phoenixkey-Interface/src/lib/api.ts)) đều `return await res.json() as T` — KHÔNG unwrap `result`.
 
 **Recommend chốt:** Clients adapt — unwrap `result` field ở fetcher level. Lý do:
+
 - Backend pattern nhất quán toàn bộ app, đụng vào risk lớn
 - 1 dòng `return body.result ?? body` ở fetcher fix được tất cả
 - Web Interface có cùng bug → cùng fix
 
 ### 2.3. Error code format
 
-| | Type |
-|---|---|
-| Backend `ErrorCode.java` | integer: `1301`, `1302`, `1303`, ... |
-| SDK + Web expect | string: `"session_expired"`, `"session_not_found"` |
+|                          | Type                                               |
+| ------------------------ | -------------------------------------------------- |
+| Backend `ErrorCode.java` | integer: `1301`, `1302`, `1303`, ...               |
+| SDK + Web expect         | string: `"session_expired"`, `"session_not_found"` |
 
 **Recommend chốt:** Clients map locally trong fetcher.
 
@@ -120,13 +123,14 @@ Backend giữ integer codes (đã dùng trong activity logs, tracking). Clients 
 
 ### 2.4. QR payload format
 
-| Source | Format |
-|---|---|
-| Spec PhoenixKey_Interface.md §6.3 line 517-528 | `base64url(JSON({ v: 1, sid, ch, dom, exp }))` — short keys |
-| SDK README line 80 | `aladin://auth?session=${session_id}&app=${appId}` — deep link |
-| Mobile (Tùng impl unknown) | Likely follow spec |
+| Source                                         | Format                                                         |
+| ---------------------------------------------- | -------------------------------------------------------------- |
+| Spec PhoenixKey_Interface.md §6.3 line 517-528 | `base64url(JSON({ v: 1, sid, ch, dom, exp }))` — short keys    |
+| SDK README line 80                             | `aladin://auth?session=${session_id}&app=${appId}` — deep link |
+| Mobile (Tùng impl unknown)                     | Likely follow spec                                             |
 
 **Recommend chốt:** Spec wins — base64url JSON with short keys. Lý do:
+
 - Mobile (Tùng) là source of truth cho QR consumer — phải confirm Tùng đã implement format nào
 - Short keys giảm QR density (smaller QR = easier scan)
 - Carries `challenge` in QR — mobile có thể pre-fetch verify
@@ -147,57 +151,60 @@ SDK README + auth.ts cần update.
 
 ### 3.1. Critical (SDK fail runtime với current backend)
 
-| # | Gap | SDK assumption | Backend reality | Severity | Fix in |
-|---|---|---|---|---|---|
-| 1 | **Field naming** | snake_case | camelCase | 🔴 Mọi field undefined | §2.1 — backend Jackson config |
-| 2 | **Response wrap** | raw `{ session_id, ... }` | `{ code, message, result: {...} }` | 🔴 Toàn bộ response shape sai | §2.2 — SDK fetcher unwrap |
-| 3 | **`pushLinkedDevice` API** | token in `Authorization: Bearer` header, `POST /auth/session/push` no body | Body `{ sessionId, linkedDeviceToken }` | 🔴 Backend reject 400 | §3.4 — SDK auth.ts:145 |
-| 4 | **Error code format** | string `"session_expired"` | integer `1302` | 🟡 Error matching không hoạt động | §2.3 — SDK fetcher map |
+| #   | Gap                        | SDK assumption                                                             | Backend reality                         | Severity                          | Fix in                        |
+| --- | -------------------------- | -------------------------------------------------------------------------- | --------------------------------------- | --------------------------------- | ----------------------------- |
+| 1   | **Field naming**           | snake_case                                                                 | camelCase                               | 🔴 Mọi field undefined            | §2.1 — backend Jackson config |
+| 2   | **Response wrap**          | raw `{ session_id, ... }`                                                  | `{ code, message, result: {...} }`      | 🔴 Toàn bộ response shape sai     | §2.2 — SDK fetcher unwrap     |
+| 3   | **`pushLinkedDevice` API** | token in `Authorization: Bearer` header, `POST /auth/session/push` no body | Body `{ sessionId, linkedDeviceToken }` | 🔴 Backend reject 400             | §3.4 — SDK auth.ts:145        |
+| 4   | **Error code format**      | string `"session_expired"`                                                 | integer `1302`                          | 🟡 Error matching không hoạt động | §2.3 — SDK fetcher map        |
 
 ### 3.2. Documentation/Cosmetic mismatches
 
-| # | Gap | Source | Impact |
-|---|---|---|---|
-| 5 | DID format `did:prism:abc...` trong SDK README | docs error | Cosmetic — backend dùng `did:cardano:<network>:<txHash>` |
-| 6 | QR payload deep-link `aladin://auth?session=...` | SDK README L80 | Mobile chắc không scan được — cần align với Tùng |
-| 7 | API key concept toàn config | SDK types.ts | Misleading — backend không có |
-| 8 | `appId`/`appName` chưa được backend dùng | SDK config required | Currently no-op, có thể optional |
+| #   | Gap                                              | Source              | Impact                                                   |
+| --- | ------------------------------------------------ | ------------------- | -------------------------------------------------------- |
+| 5   | DID format `did:prism:abc...` trong SDK README   | docs error          | Cosmetic — backend dùng `did:cardano:<network>:<txHash>` |
+| 6   | QR payload deep-link `aladin://auth?session=...` | SDK README L80      | Mobile chắc không scan được — cần align với Tùng         |
+| 7   | API key concept toàn config                      | SDK types.ts        | Misleading — backend không có                            |
+| 8   | `appId`/`appName` chưa được backend dùng         | SDK config required | Currently no-op, có thể optional                         |
 
 ### 3.3. Missing surface area
 
 SDK hiện chỉ có `auth` (login flow). Thiếu các flow khác đã implement ở backend:
 
-| Backend endpoint | SDK module | Phase |
-|---|---|---|
-| `POST /sign/request` | `client.signRequest.create(intent)` | Phase 2 |
-| `GET /sign/request/{id}` | (mobile only — không đưa vào SDK 3rd-party) | — |
-| `POST /sign/{id}/cancel` | `client.signRequest.cancel(id)` | Phase 2 |
-| SSE event `signed` | `client.signRequest.openStream()` | Phase 2 |
-| `GET /identity/{did}/pubkey` | `client.identity.getPubkey(did)` | Phase 2 |
-| `GET /identity/{did}/document` | `client.identity.resolveDID(did)` | Phase 2 |
-| `GET /identity/health` | `client.identity.getHealth()` | Phase 2 |
-| `POST /seed/export-request` | `client.seed.requestExport()` | Phase 2 |
-| `GET /api/v1/activity-logs` | `client.activity.list(opts)` | Phase 2 |
-| `POST /devices/register` | (mobile only — Aladin app, không SDK) | — |
-| `GET /tx/estimate` | `client.fees.estimate(type)` | Phase 2 |
-| `GET /api/v1/identity/nodes` | `client.network.getNodes()` | Phase 2 (low priority — stub) |
-| `POST /support/session/init` | `client.support.initSession()` | Phase 2 (low priority — stub) |
-| `POST /keys/{authorize,revoke,rotate}` | (advanced — phase 3, 3rd-party hiếm khi cần) | Phase 3 |
-| `POST /guardians/{add,remove}` | Phase 3 | Phase 3 |
-| `POST /internal/sync-taad` | Internal — không SDK | — |
+| Backend endpoint                       | SDK module                                   | Phase                         |
+| -------------------------------------- | -------------------------------------------- | ----------------------------- |
+| `POST /sign/request`                   | `client.signRequest.create(intent)`          | Phase 2                       |
+| `GET /sign/request/{id}`               | (mobile only — không đưa vào SDK 3rd-party)  | —                             |
+| `POST /sign/{id}/cancel`               | `client.signRequest.cancel(id)`              | Phase 2                       |
+| SSE event `signed`                     | `client.signRequest.openStream()`            | Phase 2                       |
+| `GET /identity/{did}/pubkey`           | `client.identity.getPubkey(did)`             | Phase 2                       |
+| `GET /identity/{did}/document`         | `client.identity.resolveDID(did)`            | Phase 2                       |
+| `GET /identity/health`                 | `client.identity.getHealth()`                | Phase 2                       |
+| `POST /seed/export-request`            | `client.seed.requestExport()`                | Phase 2                       |
+| `GET /api/v1/activity-logs`            | `client.activity.list(opts)`                 | Phase 2                       |
+| `POST /devices/register`               | (mobile only — Aladin app, không SDK)        | —                             |
+| `GET /tx/estimate`                     | `client.fees.estimate(type)`                 | Phase 2                       |
+| `GET /api/v1/identity/nodes`           | `client.network.getNodes()`                  | Phase 2 (low priority — stub) |
+| `POST /support/session/init`           | `client.support.initSession()`               | Phase 2 (low priority — stub) |
+| `POST /keys/{authorize,revoke,rotate}` | (advanced — phase 3, 3rd-party hiếm khi cần) | Phase 3                       |
+| `POST /guardians/{add,remove}`         | Phase 3                                      | Phase 3                       |
+| `POST /internal/sync-taad`             | Internal — không SDK                         | —                             |
 
 ### 3.4. `pushLinkedDevice` chi tiết
 
 Backend [SessionController.java:132-140](PhoenixKey-Database/src/main/java/.../controller/SessionController.java):
+
 ```java
 @PostMapping("/push")
 public ResponseEntity<DataResponse<Void>> push(@Valid @RequestBody SessionPushRequest request) {
     sessionService.pushToLinkedDevice(request.sessionId(), request.linkedDeviceToken());
 }
 ```
+
 Body: `{ "sessionId": "...", "linkedDeviceToken": "..." }`
 
 SDK [auth.ts:145-154](src/auth.ts#L145):
+
 ```typescript
 async pushLinkedDevice(): Promise<void> {
     const device = this._getLinkedDevice?.();
@@ -214,6 +221,7 @@ async pushLinkedDevice(): Promise<void> {
 Fix: SDK đổi thành body POST. Cần thêm `sessionId` parameter — SDK currently không có (vì lúc push, sessionId mới đang chuẩn bị mở, chưa init). Cần thiết kế lại flow:
 
 **Flow đúng** (theo spec §6.3):
+
 1. User vào `phoenixkey.me/login` lần 2 (đã có linkedDeviceToken trong localStorage)
 2. Web call `POST /auth/session/init` → nhận `sessionId` mới
 3. Web call `POST /auth/session/push` với `{ sessionId (mới init), linkedDeviceToken }`
@@ -241,13 +249,13 @@ async pushLinkedDevice(sessionId: string): Promise<void> {
 
 Trước khi code, cần chốt 5 điểm với sếp/Long:
 
-| # | Quyết định | Recommend | Tại sao |
-|---|---|---|---|
-| 1 | **Naming convention** | snake_case | Spec + Web + SDK đều assume snake_case. 1 line backend config fix toàn bộ. Update `API.md` ~30 phút. |
-| 2 | **Response wrapping** | Keep `DataResponse` wrapper, SDK unwrap | Backend pattern nhất quán toàn app, đụng risk lớn |
-| 3 | **Error code** | Backend keep integer, SDK map thành string | Activity logs đã reference integer codes |
-| 4 | **API key** | Drop khỏi SDK Phase 1, optional Phase 4 | Backend chưa có middleware, internal Aladin trust được |
-| 5 | **QR format** | Spec wins (base64url JSON) | Mobile (Tùng) là source of truth cho QR consumer |
+| #   | Quyết định            | Recommend                                  | Tại sao                                                                                              |
+| --- | --------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| 1   | **Naming convention** | snake_case                                 | Spec + Web + SDK đều assume snake_case. 1 line backend config fix toàn bộ. Update `API.md` ~30 phút. |
+| 2   | **Response wrapping** | Keep `DataResponse` wrapper, SDK unwrap    | Backend pattern nhất quán toàn app, đụng risk lớn                                                    |
+| 3   | **Error code**        | Backend keep integer, SDK map thành string | Activity logs đã reference integer codes                                                             |
+| 4   | **API key**           | Drop khỏi SDK Phase 1, optional Phase 4    | Backend chưa có middleware, internal Aladin trust được                                               |
+| 5   | **QR format**         | Spec wins (base64url JSON)                 | Mobile (Tùng) là source of truth cho QR consumer                                                     |
 
 **Action item trước Phase 1:** 30 phút meeting với sếp để chốt 5 điểm trên (hoặc async qua Slack/email với link plan này).
 
@@ -260,6 +268,7 @@ Trước khi code, cần chốt 5 điểm với sếp/Long:
 ### 5.1. Backend changes (1 commit, 1-2h work)
 
 **File `application.yml`** — thêm Jackson naming strategy:
+
 ```yaml
 spring:
   jackson:
@@ -271,6 +280,7 @@ spring:
 **File `docs/PhoenixKey.postman_collection.json`** — sweep request bodies, đổi camelCase → snake_case (vd `userDid` → `user_did`).
 
 **Smoke test trên server:**
+
 ```bash
 docker compose up -d --build app
 curl -X POST http://localhost:8080/api/v1/auth/session/init | jq
@@ -278,6 +288,7 @@ curl -X POST http://localhost:8080/api/v1/auth/session/init | jq
 ```
 
 **Done criteria:**
+
 - Backend redeploy, response field tất cả snake_case
 - Postman collection chạy lại OK
 - API.md examples khớp 100% với response thực tế
@@ -293,7 +304,7 @@ if (!json || res.status === 204) return undefined as T;
 const body = await res.json();
 
 // Unwrap PhoenixKey DataResponse pattern
-if (body && typeof body === 'object' && 'code' in body && 'result' in body) {
+if (body && typeof body === "object" && "code" in body && "result" in body) {
   if (body.code !== 1000) {
     throw new PhoenixKeyError({
       status: res.status,
@@ -363,10 +374,10 @@ export type PhoenixKeyConfig = {
   /** Display name shown to users in mobile approval screen. */
   appName: string;
   /** Domain bound to authentication challenge (chống cross-domain replay). */
-  domain: string;  // ← NEW: required
+  domain: string; // ← NEW: required
   apiBaseUrl?: string;
   sseBaseUrl?: string;
-  environment?: "mainnet" | "preprod";  // ← was "testnet", align with CARDANO_NETWORK
+  environment?: "mainnet" | "preprod"; // ← was "testnet", align with CARDANO_NETWORK
 };
 ```
 
@@ -434,26 +445,26 @@ Tạo `examples/login-poc/` (vanilla HTML + qrcode lib):
 
 ```html
 <script type="module">
-  import { PhoenixKeyClient } from '@phoenixkeydid/phoenixkey-sdk';
-  import QRCode from 'qrcode';
-  
+  import { PhoenixKeyClient } from "@phoenixkeydid/phoenixkey-sdk";
+  import QRCode from "qrcode";
+
   const phoenix = new PhoenixKeyClient({
-    apiBaseUrl: 'https://api.phoenixkey.me',
-    appId: 'sdk-poc',
-    appName: 'SDK PoC',
-    domain: 'localhost',
-    environment: 'preprod',
+    apiBaseUrl: "https://api.phoenixkey.me",
+    appId: "sdk-poc",
+    appName: "SDK PoC",
+    domain: "localhost",
+    environment: "preprod",
   });
-  
-  document.getElementById('login').onclick = async () => {
+
+  document.getElementById("login").onclick = async () => {
     const init = await phoenix.auth.initSession();
-    const qrPayload = phoenix.auth.buildQrPayload(init, 'localhost');
-    QRCode.toCanvas(document.getElementById('qr'), qrPayload);
-    
+    const qrPayload = phoenix.auth.buildQrPayload(init, "localhost");
+    QRCode.toCanvas(document.getElementById("qr"), qrPayload);
+
     const stream = phoenix.auth.openStream(init.session_id, init.temp_token, {
       onMessage: ({ data }) => {
-        if (data.status === 'approved') {
-          console.log('Logged in!', data);
+        if (data.status === "approved") {
+          console.log("Logged in!", data);
           phoenix.session.set(data.session_token, data.user_did);
           stream.close();
         }
@@ -465,6 +476,7 @@ Tạo `examples/login-poc/` (vanilla HTML + qrcode lib):
 ```
 
 **Done criteria Phase 1:**
+
 - [ ] Backend snake_case + redeployed, smoke test pass
 - [ ] SDK v0.1.1 build clean (`pnpm build` success)
 - [ ] PoC HTML chạy local hit api.phoenixkey.me — `initSession()` trả response đúng shape (snake_case, unwrapped)
@@ -474,15 +486,15 @@ Tạo `examples/login-poc/` (vanilla HTML + qrcode lib):
 
 ### 5.9. Effort breakdown Phase 1
 
-| Day | Task | Owner |
-|---|---|---|
-| 1 | Backend Jackson config + redeploy + API.md update | Backend dev (Long?) |
-| 2 | SDK fetcher refactor (unwrap, error map, drop apiKey) | SDK dev |
-| 3 | SDK auth.ts fix (pushLinkedDevice body, buildQrPayload helper, types update) | SDK dev |
-| 4 | SDK examples/login-poc PoC | SDK dev |
-| 5 | E2E test với Postman simulate mobile + bug fix | SDK + backend |
-| 6 | Web Interface un-mock (`/login` real flow) — verify cùng SDK pattern | Web dev (Long) |
-| 7 | Buffer + documentation update | — |
+| Day | Task                                                                         | Owner               |
+| --- | ---------------------------------------------------------------------------- | ------------------- |
+| 1   | Backend Jackson config + redeploy + API.md update                            | Backend dev (Long?) |
+| 2   | SDK fetcher refactor (unwrap, error map, drop apiKey)                        | SDK dev             |
+| 3   | SDK auth.ts fix (pushLinkedDevice body, buildQrPayload helper, types update) | SDK dev             |
+| 4   | SDK examples/login-poc PoC                                                   | SDK dev             |
+| 5   | E2E test với Postman simulate mobile + bug fix                               | SDK + backend       |
+| 6   | Web Interface un-mock (`/login` real flow) — verify cùng SDK pattern         | Web dev (Long)      |
+| 7   | Buffer + documentation update                                                | —                   |
 
 ---
 
@@ -552,13 +564,13 @@ await phoenix.signRequest.cancel(request_id);
 ### 6.3. `identity` module
 
 ```typescript
-const pubkey = await phoenix.identity.getPubkey('did:cardano:preprod:...');
+const pubkey = await phoenix.identity.getPubkey("did:cardano:preprod:...");
 // → { public_key_hex: '02...', key_role: 'owner' }
 
-const doc = await phoenix.identity.resolveDID('did:cardano:preprod:...');
+const doc = await phoenix.identity.resolveDID("did:cardano:preprod:...");
 // → W3C DID Document JSON
 
-const health = await phoenix.identity.getHealth();   // requires Bearer
+const health = await phoenix.identity.getHealth(); // requires Bearer
 // → { seed_exported, exported_at, active_key_count, guardian_count }
 ```
 
@@ -580,14 +592,14 @@ const health = await phoenix.identity.getHealth();   // requires Bearer
 
 ### 6.6. Effort Phase 2
 
-| Day | Task |
-|---|---|
-| 1-2 | `signRequest` module + SSE multiplex |
-| 3 | `identity` + `activity` modules |
-| 4 | `seed`, `fees`, `network`, `support` (low-effort wrappers) |
-| 5-6 | Unit tests + integration tests |
-| 7 | Examples + README v0.2.0 |
-| 8 | Buffer |
+| Day | Task                                                       |
+| --- | ---------------------------------------------------------- |
+| 1-2 | `signRequest` module + SSE multiplex                       |
+| 3   | `identity` + `activity` modules                            |
+| 4   | `seed`, `fees`, `network`, `support` (low-effort wrappers) |
+| 5-6 | Unit tests + integration tests                             |
+| 7   | Examples + README v0.2.0                                   |
+| 8   | Buffer                                                     |
 
 ---
 
@@ -599,13 +611,14 @@ const health = await phoenix.identity.getHealth();   // requires Bearer
 
 3 thay đổi nhỏ ở [PhoenixKey-Database](../PhoenixKey-Database):
 
-| # | Change | File | LOC |
-|---|---|---|---|
-| 1 | Dynamic CORS đọc origin từ `clients` table (hoặc env) | `WebConfig.java` | ~20 |
-| 2 | SSE event `approved` include `signature` + `challenge` + `timestamp` (cho 3rd-party verify locally) | `SessionServiceImpl.java:170-174` | ~5 |
-| 3 | Activity log gắn `domain` metadata để biết user login app nào | `SessionServiceImpl.java:182` | ~2 |
+| #   | Change                                                                                              | File                              | LOC |
+| --- | --------------------------------------------------------------------------------------------------- | --------------------------------- | --- |
+| 1   | Dynamic CORS đọc origin từ `clients` table (hoặc env)                                               | `WebConfig.java`                  | ~20 |
+| 2   | SSE event `approved` include `signature` + `challenge` + `timestamp` (cho 3rd-party verify locally) | `SessionServiceImpl.java:170-174` | ~5  |
+| 3   | Activity log gắn `domain` metadata để biết user login app nào                                       | `SessionServiceImpl.java:182`     | ~2  |
 
 **KHÔNG cần** (per discussion §4):
+
 - Client registration table với DB
 - API key middleware
 - OAuth2 redirect flow
@@ -646,6 +659,7 @@ const result2 = await verifier.verifyIntent({
 ```
 
 **Implementation key:**
+
 - Resolve pubkey từ DID — 2 sources possible:
   - PhoenixKey API `GET /identity/{did}/pubkey` (default, requires PhoenixKey server live)
   - Cardano direct via Blockfrost (`pubkeyResolver: 'cardano'`) — đọc inline datum từ tx hash trong DID, decode W3CDIDDocument, lấy pubkey. **Decentralized — không phụ thuộc PhoenixKey server**.
@@ -655,6 +669,7 @@ const result2 = await verifier.verifyIntent({
 ### 7.3. Sub-package `@phoenixkeydid/phoenixkey-sdk/verifier`
 
 Tách SDK thành 2 entry points:
+
 - `@phoenixkeydid/phoenixkey-sdk` — full SDK (browser, includes login/sign/all modules)
 - `@phoenixkeydid/phoenixkey-sdk/verifier` — verify-only (Node + browser, lightweight, ~50KB instead of ~200KB)
 
@@ -681,6 +696,7 @@ Tách SDK thành 2 entry points:
 Tạo `docs/INTEGRATION.md` document cụ thể:
 
 **Use case 1: OriLife login với PhoenixKey**
+
 ```
 1. User vào OriLife.com, click "Sign in with PhoenixKey"
 2. OriLife frontend (SDK) call phoenix.auth.initSession()
@@ -689,9 +705,9 @@ Tạo `docs/INTEGRATION.md` document cụ thể:
 5. Mobile show "OriLife.com is requesting authentication" + biometric
 6. Mobile sign challenge:domain:timestamp với Hardware Key
 7. Mobile POST /auth/session/{id}/approve
-8. Backend verify signature, mint session_token, emit SSE event với 
+8. Backend verify signature, mint session_token, emit SSE event với
    {session_token, signature, challenge, timestamp, user_did}
-9. OriLife frontend SDK nhận event → forward {user_did, signature, challenge, 
+9. OriLife frontend SDK nhận event → forward {user_did, signature, challenge,
    timestamp} sang OriLife backend
 10. OriLife backend verify với @phoenixkeydid/phoenixkey-sdk/verifier:
     - Resolve pubkey từ user_did (qua Blockfrost direct hoặc PhoenixKey API)
@@ -700,12 +716,13 @@ Tạo `docs/INTEGRATION.md` document cụ thể:
 ```
 
 **Use case 2: OriLife yêu cầu user ký intent**
+
 ```
-1. User đang trong session OriLife, thực hiện hành động cần signature 
+1. User đang trong session OriLife, thực hiện hành động cần signature
    (vd: thanh toán)
-2. OriLife backend tạo intent JSON: {type: 'TRANSFER', body, domain: 
+2. OriLife backend tạo intent JSON: {type: 'TRANSFER', body, domain:
    'orilife.com', app_id: 'orilife-web-v1', nonce, timestamp, display_text}
-3. OriLife frontend SDK call phoenix.signRequest.create(intent) — relay qua 
+3. OriLife frontend SDK call phoenix.signRequest.create(intent) — relay qua
    PhoenixKey
 4. PhoenixKey emit push notification tới mobile (qua linked device hoặc QR)
 5. Mobile show display_text + biometric → ký canonical intent JSON
@@ -731,15 +748,15 @@ Tạo `docs/INTEGRATION.md` document cụ thể:
 
 ### 7.6. Effort Phase 3
 
-| Day | Task |
-|---|---|
-| 1 | Backend 3 changes — CORS dynamic, SSE payload, log domain |
+| Day | Task                                                         |
+| --- | ------------------------------------------------------------ |
+| 1   | Backend 3 changes — CORS dynamic, SSE payload, log domain    |
 | 2-3 | Verifier SDK: ECDSA verify + DID pubkey resolver (2 sources) |
-| 4 | Sub-package build setup (tsup multi-entry) |
-| 5 | Demo OriLife mock backend Express |
-| 6 | E2E test full flow (PoC frontend + OriLife BE) |
-| 7-8 | INTEGRATION.md + sample apps |
-| 9 | Buffer + bug fix |
+| 4   | Sub-package build setup (tsup multi-entry)                   |
+| 5   | Demo OriLife mock backend Express                            |
+| 6   | E2E test full flow (PoC frontend + OriLife BE)               |
+| 7-8 | INTEGRATION.md + sample apps                                 |
+| 9   | Buffer + bug fix                                             |
 
 ---
 
@@ -809,14 +826,14 @@ if (result.isValid()) {
 
 ### 9.1. Risks
 
-| Risk | Severity | Mitigation |
-|---|---|---|
-| Backend đổi sang snake_case break Postman tests + Web mock-login | 🟡 | Test Postman trước deploy; Web đang mock-login nên không ảnh hưởng |
-| Mobile (Tùng) đã implement với convention khác | 🔴 | **Cần confirm với Tùng trước Phase 1** — chốt convention chung |
-| 3rd-party app (OriLife) chưa sẵn sàng integrate, SDK ship rỗi | 🟢 | Phase 3 nên parallelize với 1 partner thực tế (OriLife) test ngay |
-| SDK convention drift sau Phase 1 — có thể SDK cũ phải maintain | 🟡 | Bump major version (v0.x → v1.0.0), document breaking changes rõ |
-| Decentralized resolver (Blockfrost) phụ thuộc Blockfrost uptime | 🟢 | Phase 3+ có thể support multiple Cardano backend (Koios fallback) |
-| Backend `domain` field hiện không validate — attacker pass domain bất kỳ | 🟡 | Phase 3 — config `allowed_domains` per client, hoặc dùng CORS Origin header verify |
+| Risk                                                                     | Severity | Mitigation                                                                         |
+| ------------------------------------------------------------------------ | -------- | ---------------------------------------------------------------------------------- |
+| Backend đổi sang snake_case break Postman tests + Web mock-login         | 🟡       | Test Postman trước deploy; Web đang mock-login nên không ảnh hưởng                 |
+| Mobile (Tùng) đã implement với convention khác                           | 🔴       | **Cần confirm với Tùng trước Phase 1** — chốt convention chung                     |
+| 3rd-party app (OriLife) chưa sẵn sàng integrate, SDK ship rỗi            | 🟢       | Phase 3 nên parallelize với 1 partner thực tế (OriLife) test ngay                  |
+| SDK convention drift sau Phase 1 — có thể SDK cũ phải maintain           | 🟡       | Bump major version (v0.x → v1.0.0), document breaking changes rõ                   |
+| Decentralized resolver (Blockfrost) phụ thuộc Blockfrost uptime          | 🟢       | Phase 3+ có thể support multiple Cardano backend (Koios fallback)                  |
+| Backend `domain` field hiện không validate — attacker pass domain bất kỳ | 🟡       | Phase 3 — config `allowed_domains` per client, hoặc dùng CORS Origin header verify |
 
 ### 9.2. Open Questions (cần align với sếp/Long/Tùng)
 
@@ -863,12 +880,12 @@ Tổng: ~6 tuần với 1 dev focus full-time, hoặc ~10 tuần parallel với 
 
 ### 10.2. Phase gate criteria (cần pass mới sang Phase tiếp theo)
 
-| Phase | Gate criteria |
-|---|---|
-| 1 → 2 | E2E login flow E2E hoạt động với PoC HTML; Web Interface un-mock cùng convention |
-| 2 → 3 | Sign-request flow E2E với mobile; 5+ apps (mock) gọi SDK successfully trong test |
-| 3 → 4 | OriLife (real partner) integrate verifier SDK production; pass 1 tuần soak test |
-| 4 → ship | Java SDK ship + AladinWork integrate ít nhất 1 endpoint với verifier |
+| Phase    | Gate criteria                                                                    |
+| -------- | -------------------------------------------------------------------------------- |
+| 1 → 2    | E2E login flow E2E hoạt động với PoC HTML; Web Interface un-mock cùng convention |
+| 2 → 3    | Sign-request flow E2E với mobile; 5+ apps (mock) gọi SDK successfully trong test |
+| 3 → 4    | OriLife (real partner) integrate verifier SDK production; pass 1 tuần soak test  |
+| 4 → ship | Java SDK ship + AladinWork integrate ít nhất 1 endpoint với verifier             |
 
 ### 10.3. Decision points + checkpoints
 

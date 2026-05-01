@@ -1,26 +1,33 @@
 {
   "name": "@phoenixkeydid/phoenixkey-sdk",
-  "version": "0.1.0",
-  "description": "Identity & auth SDK for the MagicLamp ecosystem",
+  "version": "0.2.0",
+  "description": "Identity & auth SDK for the MagicLamp / Aladin ecosystem (PhoenixKey)",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
+    },
+    "./verifier": {
+      "types": "./dist/verifier.d.ts",
+      "import": "./dist/verifier.mjs",
+      "require": "./dist/verifier.js"
     }
   },
   "files": ["dist"],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "build": "tsup src/index.ts src/verifier.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts src/verifier.ts --format cjs,esm --dts --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
-    "@microsoft/fetch-event-source": "^2.0.1"
+    "@microsoft/fetch-event-source": "^2.0.1",
+    "@noble/curves": "^1.6.0",
+    "@noble/hashes": "^1.5.0"
   },
   "peerDependencies": {
     "typescript": ">=5.0.0"
@@ -29,7 +36,7 @@
     "tsup": "^8.0.0",
     "typescript": "^5.4.0"
   },
-  "keywords": ["phoenixkey", "magiclamp", "cardano", "did", "identity", "auth", "web3"],
+  "keywords": ["phoenixkey", "magiclamp", "aladin", "cardano", "did", "identity", "auth", "web3"],
   "author": "MagicLamp Network",
   "license": "MIT",
   "repository": {
