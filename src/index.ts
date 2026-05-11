@@ -1,22 +1,31 @@
 /**
- * @phoenixkey/sdk
+ * @phoenixkeydid/phoenixkey-sdk
  *
- * Identity & auth SDK for the MagicLamp ecosystem.
+ * Identity & auth SDK for the MagicLamp / Aladin ecosystem.
+ *
  * Docs: https://docs.phoenixkey.me
- * API:  https://api.phoenixkey.me/docs
+ * API:  https://api.phoenixkey.me/api/v1
  */
 
-// Main client
 export { PhoenixKeyClient } from "./client";
 
-// Auth module (accessible via client.auth — re-exported for typing)
+// Modules (typing re-export — accessible via client.<module>)
 export { AuthModule } from "./auth";
+export { SignRequestModule } from "./signRequest";
+export type { SignSseData } from "./signRequest";
+export { IdentityModule } from "./identity";
+export { ActivityModule } from "./activity";
+export { SeedModule } from "./seed";
+export { FeesModule } from "./fees";
+export type { FeeType } from "./fees";
+export { NetworkModule } from "./network";
+export { SupportModule } from "./support";
 
-// SSE (accessible via client.auth.openStream — re-exported for typing)
+// SSE primitive (advanced — for custom flows)
 export { ResilientSSE } from "./sse";
 export type { SseOptions } from "./sse";
 
-// Session utilities (accessible via client.session)
+// Session / linked-device storage
 export {
   getSessionToken,
   setSession,
@@ -30,16 +39,45 @@ export {
   clearAll,
 } from "./session";
 
-// All types
+// Types
 export type {
   PhoenixKeyConfig,
+  // Auth
   LoginSessionInit,
   LoginSessionStatus,
-  SessionMeta,
-  LinkedDevice,
+  QrPayload,
+  // Sign Request
+  SignIntent,
+  SignRequestCreate,
+  SignRequestPayload,
+  SignedEventData,
+  CancelledEventData,
+  // Identity
+  IdentityRegisterRequest,
+  IdentityRegisterResponse,
+  IdentityPubkey,
+  IdentityStatus,
+  IdentityHealth,
+  W3CDIDDocument,
+  // Activity
+  ActivityLogItem,
+  ActivityLogPage,
+  ActivityLogQuery,
+  // Misc
+  FeeEstimate,
+  LampNetNode,
+  LampNetNodes,
+  SupportSession,
+  // SSE
   SseEvent,
   SseHandlers,
+  // Storage
+  SessionMeta,
+  LinkedDevice,
 } from "./types";
 
-// Error class — use instanceof for branching
+// Errors
 export { PhoenixKeyError } from "./types";
+
+// Fetcher (advanced — typically not needed)
+export { ERROR_CODE_MAP } from "./fetcher";

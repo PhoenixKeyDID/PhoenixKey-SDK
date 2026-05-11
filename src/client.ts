@@ -3,63 +3,114 @@
  *
  * @example
  * ```ts
- * import { PhoenixKeyClient } from "@phoenixkey/sdk";
+ * import { PhoenixKeyClient } from "@phoenixkeydid/phoenixkey-sdk";
  *
  * export const phoenix = new PhoenixKeyClient({
- *   apiKey:  process.env.NEXT_PUBLIC_PHOENIXKEY_API_KEY!,
- *   appId:   "orilife",
+ *   appId:   "orilife-web-v1",
  *   appName: "OriLife",
+ *   domain:  "orilife.com",
+ *   environment: "mainnet",
  * });
  * ```
  */
 
 import { PhoenixKeyConfig } from "./types";
 import { AuthModule } from "./auth";
+import { SignRequestModule } from "./signRequest";
+import { IdentityModule } from "./identity";
+import { ActivityModule } from "./activity";
+import { SeedModule } from "./seed";
+import { FeesModule } from "./fees";
+import { NetworkModule } from "./network";
+import { SupportModule } from "./support";
 import * as session from "./session";
 
 export class PhoenixKeyClient {
+  /** QR-pairing login + linked-device flow (spec §6). */
   readonly auth: AuthModule;
+  /** Web ↔ mobile sign request relay (spec §7). */
+  readonly signRequest: SignRequestModule;
+  /** DID resolve, pubkey lookup, health snapshot. */
+  readonly identity: IdentityModule;
+  /** Activity logs với cursor pagination (spec §10). */
+  readonly activity: ActivityModule;
+  /** Seed Phrase export flow (spec §9.2). */
+  readonly seed: SeedModule;
+  /** Cardano fee estimate (MVP hardcode). */
+  readonly fees: FeesModule;
+  /** LampNet node map (spec §14.4 stub). */
+  readonly network: NetworkModule;
+  /** Get LAMP support session (spec §15.8 stub). */
+  readonly support: SupportModule;
+
+  /** localStorage helpers. */
   readonly session: typeof session;
 
-  private readonly config: Required<PhoenixKeyConfig>;
+  readonly config: Required<Omit<PhoenixKeyConfig, "apiKey">> & { apiKey?: string };
 
   constructor(config: PhoenixKeyConfig) {
+    if (!config.appId) throw new Error("PhoenixKeyClient: appId required");
+    if (!config.appName) throw new Error("PhoenixKeyClient: appName required");
+    if (!config.domain) throw new Error("PhoenixKeyClient: domain required");
+
+    const apiBaseUrl = config.apiBaseUrl ?? "https://api.phoenixkey.me";
+
     this.config = {
-      apiBaseUrl: "https://api.phoenixkey.me",
-      sseBaseUrl: "https://api.phoenixkey.me",
-      environment: "mainnet",
-      ...config,
+      appId: config.appId,
+      appName: config.appName,
+      domain: config.domain,
+      apiBaseUrl,
+      sseBaseUrl: config.sseBaseUrl ?? apiBaseUrl,
+      environment: config.environment ?? "mainnet",
+      apiKey: config.apiKey,
     };
 
     this.session = session;
 
     this.auth = new AuthModule(
-      this.config.apiKey,
       this.config.apiBaseUrl,
       this.config.sseBaseUrl,
+      this.config.domain,
+      session.getLinkedDevice,
+    );
+
+    this.signRequest = new SignRequestModule(
+      this.config.apiBaseUrl,
+      this.config.sseBaseUrl,
+      this.config.appId,
+      this.config.domain,
       session.getSessionToken,
     );
 
-    // Wire linked-device getter into auth module
-    this.auth._getLinkedDevice = session.getLinkedDevice;
+    this.identity = new IdentityModule(
+      this.config.apiBaseUrl,
+      session.getSessionToken,
+    );
+
+    this.activity = new ActivityModule(
+      this.config.apiBaseUrl,
+      session.getSessionToken,
+    );
+
+    this.seed = new SeedModule(
+      this.config.apiBaseUrl,
+      session.getSessionToken,
+    );
+
+    this.fees = new FeesModule(this.config.apiBaseUrl);
+    this.network = new NetworkModule(this.config.apiBaseUrl);
+    this.support = new SupportModule(this.config.apiBaseUrl);
   }
 
   /**
-   * Returns true if a non-expired session exists in localStorage.
-   * Use to guard routes before the first API call.
-   *
-   * @example
-   * ```ts
-   * if (!phoenix.isLoggedIn()) router.push("/login");
-   * ```
+   * Returns true if a non-expired session_token exists in localStorage.
+   * Use to guard routes before first API call.
    */
   isLoggedIn(): boolean {
     return session.isLoggedIn();
   }
 
-  /**
-   * Clears all PhoenixKey data (session + linked device) and redirects to login.
-   */
+  /** Clears all PhoenixKey data (session + linked device). */
   logout(): void {
     session.clearAll();
   }
