@@ -157,7 +157,7 @@ Submit a Cardano transaction setting `revoked_slot` in the TAAD datum. Requires 
 | TAAD Validator (Plutus V3) | https://github.com/PhoenixKeyDID/phoenixkey-validator |
 | Resolver (Node.js) | https://github.com/PhoenixKeyDID/did-phoenix-resolver |
 | Universal Resolver Driver | https://github.com/PhoenixKeyDID/uni-resolver-driver-did-phoenix |
-| JSON-LD Context | https://phoenixkey.io/context/v1 |
+| JSON-LD Context | https://phoenixkey.me/context/v1 |
 | Mathematical Specification | https://phoenixkey.me/spec/math/v4.2 |
 
 ---
