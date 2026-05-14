@@ -45,7 +45,7 @@ export type ActivationStatusResponse = {
 
 export type ActivationEventData = {
   status: ActivationStatus;
-  txHash?: string;
+  tx_hash?: string;
   reason?: string;
 };
 
