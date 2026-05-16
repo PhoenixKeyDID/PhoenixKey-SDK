@@ -7,6 +7,21 @@
 
 import { createFetcher, FetchOptions } from "./fetcher";
 
+/**
+ * Cardano slot 0 epoch milliseconds.
+ *
+ * Use these with `WalletModule.extrapolateAccrued()` so UI counters tick
+ * between balance polls. Picking the wrong constant gives a stale or
+ * future-skewed slot — match the environment the server runs against.
+ *
+ *   - Preprod: 2022-10-25 00:00:00 UTC (preprod restart point used by BE indexer)
+ *   - Mainnet: 2020-07-29 21:44:51 UTC (Shelley genesis, system_start in network params)
+ *
+ * If BE indexer ever switches its slot reference, update here in lockstep.
+ */
+export const PREPROD_SLOT_ORIGIN_MS = 1666656000000;
+export const MAINNET_SLOT_ORIGIN_MS = 1596059091000;
+
 export type Balance = {
   address: string | null;
   balance_lovelace: number;

@@ -153,6 +153,62 @@ if (r.valid) {
 
 ---
 
+## Step 5 — Wallet & MAGIC accrual (v0.3.0+)
+
+```ts
+import {
+  PhoenixKeyClient,
+  PREPROD_SLOT_ORIGIN_MS,
+  WalletModule,
+} from "@phoenixkeydid/phoenixkey-sdk";
+
+// Server-snapshot balance — public endpoint, no auth needed
+const balance = await phoenix.wallet.getBalance(userDid);
+// → { balance_lovelace, balance_lamp, balance_magic, magic_accrued, magic_rate_per_slot, last_accrual_slot, current_slot }
+
+// UI tick between polls — extrapolate MAGIC accrual since `last_accrual_slot`
+const liveMagic = WalletModule.extrapolateAccrued(
+  balance,
+  Date.now(),
+  PREPROD_SLOT_ORIGIN_MS, // or MAINNET_SLOT_ORIGIN_MS
+);
+
+// Mint accrued MAGIC to user's wallet — auth required
+const { cardano_tx_hash } = await phoenix.wallet.claimMagic();
+```
+
+---
+
+## Step 6 — Activation package (200 k₫ → 1001 LAMP + 10 ADA)
+
+```ts
+// 1. user clicks "Mua kích hoạt 200 k"
+const session = await phoenix.activation.initiate(userWalletAddress);
+// → { activation_id, payment_qr_url, proof_chat_url, genie_did, expires_at, ... }
+
+// 2. listen for lifecycle events (payment → activated)
+const stream = phoenix.activation.openEventStream(session.activation_id, {
+  onEvent: (evt) => {
+    if (evt.status === "ACTIVATED") {
+      // refresh balance — 1001 LAMP + 10 ADA arrived
+      stream.close();
+    }
+  },
+  onError: console.error,
+});
+
+// 3. (testnet only) mock-confirm payment with admin token
+await phoenix.activation.mockConfirmPayment(session.activation_id, ADMIN_TOKEN);
+
+// — Genie side: after user paid 200 k, sign Cardano tx on mobile then:
+await phoenix.activation.submitTx(activationId, signedCborHex);
+```
+
+Both modules accept the same `_getSessionToken` getter the rest of the SDK uses
+— `setSession(token, meta)` once, all modules read it.
+
+---
+
 ## Errors
 
 All SDK methods throw `PhoenixKeyError`:

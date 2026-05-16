@@ -49,6 +49,11 @@ export type ActivationEventData = {
   reason?: string;
 };
 
+export type ActivationSubmitTxResponse = {
+  activation_id: string;
+  cardano_tx_hash: string;
+};
+
 export class ActivationModule {
   private readonly fetch: ReturnType<typeof createFetcher>;
 
@@ -123,14 +128,40 @@ export class ActivationModule {
   /**
    * Testnet only — admin token confirms payment without going through gateway.
    * Production: payment webhook calls this with HMAC-verified signature.
+   *
+   * NOTE: body intentionally empty. BE skips paymentReference validation when
+   * null (admin token path) — only enforces match when a real payment gateway
+   * webhook sends the reference. Sending a fake "MOCK-..." string would
+   * mismatch BE's generated `PK<8hex>+<6hex>` and 4xx the request.
    */
   async mockConfirmPayment(activationId: string, adminToken: string): Promise<void> {
     await this.fetch<void>(`/activation/${activationId}/confirm-payment`, {
       method: "POST",
       headers: { "X-Admin-Token": adminToken },
-      body: JSON.stringify({
-        payment_reference: `MOCK-${activationId.substring(0, 8)}`,
-      }),
+      body: JSON.stringify({}),
     } as FetchOptions);
+  }
+
+  /**
+   * Genie-only — submit Cardano-signed CBOR tx after user paid 200k off-chain.
+   * Server submits to chain and resolves activation when confirmed.
+   *
+   * @param activationId   uuid from initiate response
+   * @param signedTxCbor   hex-encoded CBOR (Genie's mobile signed with FEE_WALLET)
+   */
+  async submitTx(
+    activationId: string,
+    signedTxCbor: string,
+  ): Promise<ActivationSubmitTxResponse> {
+    const token = this._getSessionToken();
+    if (!token) throw new Error("Not authenticated");
+    return this.fetch<ActivationSubmitTxResponse>(
+      `/activation/${activationId}/submit-tx`,
+      {
+        method: "POST",
+        body: JSON.stringify({ signed_tx_cbor: signedTxCbor }),
+        bearerToken: token,
+      } as FetchOptions,
+    );
   }
 }
