@@ -17,7 +17,10 @@ import { createFetcher, FetchOptions } from "./fetcher";
  *   - Preprod: 2022-10-25 00:00:00 UTC (preprod restart point used by BE indexer)
  *   - Mainnet: 2020-07-29 21:44:51 UTC (Shelley genesis, system_start in network params)
  *
- * If BE indexer ever switches its slot reference, update here in lockstep.
+ * Verified against BE indexer's `system_start` network param (Blockfrost
+ * `/epochs/parameters`). If BE ever switches its slot reference, update here
+ * in lockstep — future Phase H may expose this via NetworkModule.getSlotOrigin()
+ * to avoid client-side constants entirely.
  */
 export const PREPROD_SLOT_ORIGIN_MS = 1666656000000;
 export const MAINNET_SLOT_ORIGIN_MS = 1596059091000;

@@ -201,7 +201,10 @@ const stream = phoenix.activation.openEventStream(session.activation_id, {
 await phoenix.activation.mockConfirmPayment(session.activation_id, ADMIN_TOKEN);
 
 // — Genie side: after user paid 200 k, sign Cardano tx on mobile then:
-await phoenix.activation.submitTx(activationId, signedCborHex);
+const { cardano_tx_hash, status } = await phoenix.activation.submitTx(
+  session.activation_id,
+  signedCborHex,
+);
 ```
 
 Both modules accept the same `_getSessionToken` getter the rest of the SDK uses

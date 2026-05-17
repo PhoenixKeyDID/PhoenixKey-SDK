@@ -50,8 +50,9 @@ export type ActivationEventData = {
 };
 
 export type ActivationSubmitTxResponse = {
-  activation_id: string;
   cardano_tx_hash: string;
+  /** BE returns "SUBMITTED" or "ACTIVATED" depending on confirmation latency. */
+  status: ActivationStatus;
 };
 
 export class ActivationModule {
@@ -129,10 +130,12 @@ export class ActivationModule {
    * Testnet only — admin token confirms payment without going through gateway.
    * Production: payment webhook calls this with HMAC-verified signature.
    *
-   * NOTE: body intentionally empty. BE skips paymentReference validation when
-   * null (admin token path) — only enforces match when a real payment gateway
-   * webhook sends the reference. Sending a fake "MOCK-..." string would
-   * mismatch BE's generated `PK<8hex>+<6hex>` and 4xx the request.
+   * NOTE: body intentionally empty. BE's match check is null-gated — if
+   * `paymentReference` is null, the check is skipped regardless of which caller
+   * sent the request. The admin token only gates *who* can call the endpoint;
+   * the real gateway path sends the real reference and gets matched. Sending a
+   * fake "MOCK-..." string would mismatch BE's generated `PK<8hex>+<6hex>`
+   * and 4xx the request.
    */
   async mockConfirmPayment(activationId: string, adminToken: string): Promise<void> {
     await this.fetch<void>(`/activation/${activationId}/confirm-payment`, {
