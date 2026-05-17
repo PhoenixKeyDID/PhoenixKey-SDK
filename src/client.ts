@@ -23,6 +23,8 @@ import { SeedModule } from "./seed";
 import { FeesModule } from "./fees";
 import { NetworkModule } from "./network";
 import { SupportModule } from "./support";
+import { WalletModule } from "./wallet";
+import { ActivationModule } from "./activation";
 import * as session from "./session";
 
 export class PhoenixKeyClient {
@@ -42,6 +44,10 @@ export class PhoenixKeyClient {
   readonly network: NetworkModule;
   /** Get LAMP support session (spec §15.8 stub). */
   readonly support: SupportModule;
+  /** Wallet balance + MAGIC accrual + claim (testnet release). */
+  readonly wallet: WalletModule;
+  /** Activation package flow — 200k VND → 1001 LAMP + 10 ADA via Genie. */
+  readonly activation: ActivationModule;
 
   /** localStorage helpers. */
   readonly session: typeof session;
@@ -100,6 +106,12 @@ export class PhoenixKeyClient {
     this.fees = new FeesModule(this.config.apiBaseUrl);
     this.network = new NetworkModule(this.config.apiBaseUrl);
     this.support = new SupportModule(this.config.apiBaseUrl);
+    this.wallet = new WalletModule(this.config.apiBaseUrl, session.getSessionToken);
+    this.activation = new ActivationModule(
+      this.config.apiBaseUrl,
+      this.config.sseBaseUrl,
+      session.getSessionToken,
+    );
   }
 
   /**

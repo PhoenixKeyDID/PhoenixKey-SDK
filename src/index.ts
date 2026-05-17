@@ -20,6 +20,16 @@ export { FeesModule } from "./fees";
 export type { FeeType } from "./fees";
 export { NetworkModule } from "./network";
 export { SupportModule } from "./support";
+export { WalletModule, PREPROD_SLOT_ORIGIN_MS, MAINNET_SLOT_ORIGIN_MS } from "./wallet";
+export type { Balance, MagicClaimResult } from "./wallet";
+export { ActivationModule } from "./activation";
+export type {
+  ActivationSession,
+  ActivationStatus,
+  ActivationStatusResponse,
+  ActivationEventData,
+  ActivationSubmitTxResponse,
+} from "./activation";
 
 // SSE primitive (advanced — for custom flows)
 export { ResilientSSE } from "./sse";
