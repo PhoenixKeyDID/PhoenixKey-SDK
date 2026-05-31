@@ -25,6 +25,55 @@ import { createFetcher, FetchOptions } from "./fetcher";
 export const PREPROD_SLOT_ORIGIN_MS = 1666656000000;
 export const MAINNET_SLOT_ORIGIN_MS = 1596059091000;
 
+const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+/** Decode a bech32 string (BIP-173) to its raw data bytes (checksum dropped). */
+function bech32ToBytes(addr: string): Uint8Array {
+  const s = addr.toLowerCase();
+  const sep = s.lastIndexOf("1");
+  if (sep < 1) throw new Error("Invalid bech32 address (no separator)");
+  const values: number[] = [];
+  for (const ch of s.slice(sep + 1)) {
+    const v = BECH32_CHARSET.indexOf(ch);
+    if (v === -1) throw new Error(`Invalid bech32 char: ${ch}`);
+    values.push(v);
+  }
+  if (values.length < 6) throw new Error("bech32 data too short");
+  const data5 = values.slice(0, values.length - 6); // drop 6-char checksum
+  let acc = 0;
+  let bits = 0;
+  const out: number[] = [];
+  for (const v of data5) {
+    acc = (acc << 5) | v;
+    bits += 5;
+    while (bits >= 8) {
+      bits -= 8;
+      out.push((acc >> bits) & 0xff);
+    }
+  }
+  return Uint8Array.from(out);
+}
+
+/**
+ * Extract the 28-byte payment key hash (hex) from a Cardano Shelley bech32
+ * address (`addr` / `addr_test`). This is the `ownerPkh` that
+ * MagicLampNetwork/MAGIC (vault-based, canonical) expects: the CIP-1852
+ * Wallet_Key payment credential that holds LAMP and signs vault spends
+ * (vault.ak: `datum.owner ∈ extra_signatories`).
+ *
+ * Throws if the payment credential is a script hash rather than a key hash.
+ */
+export function paymentKeyHashFromAddress(address: string): string {
+  const bytes = bech32ToBytes(address);
+  if (bytes.length < 29) throw new Error("Address too short for a Shelley payment credential");
+  const addrType = bytes[0] >> 4; // CIP-19 header: high nibble = address type
+  if (addrType & 0b0001) {
+    throw new Error("Payment credential is a script hash, not a key hash — not a MAGIC owner key");
+  }
+  const pkh = bytes.slice(1, 29); // first credential = payment credential (28 bytes)
+  return Array.from(pkh, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export type Balance = {
   address: string | null;
   balance_lovelace: number;
@@ -86,6 +135,31 @@ export class WalletModule {
       method: "POST",
       bearerToken: token,
     } as FetchOptions);
+  }
+
+  /**
+   * MAGIC integration bridge — resolve a user's `ownerPkh` for
+   * MagicLampNetwork/MAGIC (the canonical vault-based protocol consumed via
+   * MagicSDK). Returns the 28-byte hex payment key hash of the user's
+   * registered Cardano wallet — what `did.resolvePkh(userId)` provides in the
+   * MagicSDK INTEGRATOR_GUIDE.
+   *
+   * This is the CIP-1852 Wallet_Key payment credential (holds LAMP, signs
+   * vault spends per vault.ak `datum.owner`), NOT the TAAD controller key
+   * (`IdentityStatus.current_controller_pkh`), which is the identity key and
+   * never holds funds.
+   *
+   * Requires the user to have registered their wallet address
+   * (`registerAddress()`); throws otherwise.
+   */
+  async resolveOwnerPkh(userDid: string): Promise<string> {
+    const { address } = await this.getBalance(userDid);
+    if (!address) {
+      throw new Error(
+        `No Cardano wallet registered for ${userDid} — call registerAddress() first.`,
+      );
+    }
+    return paymentKeyHashFromAddress(address);
   }
 
   /**
