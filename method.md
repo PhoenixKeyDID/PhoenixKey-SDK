@@ -28,9 +28,16 @@ did:phoenix
 
 ```abnf
 did-phoenix        = "did:phoenix:" slot-component ":" hash-component
-slot-component     = 1*( ALPHA / DIGIT )   ; base32-encoded Cardano slot number
+slot-component     = 13base32char         ; base32 of 8-byte big-endian slot (fixed 13 chars, no padding)
+base32char         = %x61-7A / DIGIT       ; RFC 4648 base32 alphabet, lowercase
 hash-component     = 64HEXDIG              ; BLAKE2b-256 hash, lowercase hex
 ```
+
+`did:phoenix` is the **only** DID method defined by the PhoenixKey protocol;
+there is no `did:cardano` or other PhoenixKey method. The slot component is the
+fixed-width base32 encoding of the 8-byte big-endian Cardano slot at creation
+(always exactly 13 characters — leading-zero bytes are **not** stripped, so the
+component matches the resolver regex `[a-z2-7]{13}`).
 
 **Construction:**
 
@@ -55,7 +62,7 @@ A `did:phoenix` DID Document is derived from the on-chain TAAD UTxO datum at res
   "@context": [
     "https://www.w3.org/ns/did/v1",
     "https://w3id.org/security/suites/ed25519-2020/v1",
-    "https://phoenixkey.io/context/v1"
+    "https://phoenixkey.me/context/v1"
   ]
 }
 ```
@@ -68,23 +75,23 @@ A `did:phoenix` DID Document is derived from the on-chain TAAD UTxO datum at res
   "controller": "did:phoenix:SLOT:HASH",
   "verificationMethod": [
     {
-      "id": "did:phoenix:SLOT:HASH#hw-key-current",
-      "type": "Ed25519VerificationKey2020",
+      "id": "did:phoenix:SLOT:HASH#hw-key-1",
+      "type": "EcdsaSecp256r1VerificationKey2019",
       "controller": "did:phoenix:SLOT:HASH",
       "publicKeyMultibase": "z...",
       "securityLevel": "BiometricHardware"
     },
     {
-      "id": "did:phoenix:SLOT:HASH#taad-key-current",
+      "id": "did:phoenix:SLOT:HASH#taad-key-1",
       "type": "Ed25519VerificationKey2020",
       "controller": "did:phoenix:SLOT:HASH",
       "publicKeyMultibase": "z..."
     }
   ],
-  "authentication":        ["did:phoenix:SLOT:HASH#hw-key-current"],
-  "assertionMethod":       ["did:phoenix:SLOT:HASH#hw-key-current"],
-  "capabilityInvocation":  ["did:phoenix:SLOT:HASH#taad-key-current"],
-  "capabilityDelegation":  ["did:phoenix:SLOT:HASH#taad-key-current"],
+  "authentication":        ["did:phoenix:SLOT:HASH#hw-key-1"],
+  "assertionMethod":       ["did:phoenix:SLOT:HASH#hw-key-1"],
+  "capabilityInvocation":  ["did:phoenix:SLOT:HASH#taad-key-1"],
+  "capabilityDelegation":  ["did:phoenix:SLOT:HASH#taad-key-1"],
   "service": [
     {
       "id": "did:phoenix:SLOT:HASH#taad",

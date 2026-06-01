@@ -5,9 +5,14 @@
  * - Unwraps `DataResponse { code, message, result }` envelope
  * - Maps integer error codes (1301, 1302, ...) → string codes ("session_expired", ...)
  * - Throws `PhoenixKeyError` on non-2xx, code != 1000, or network failure
+ * - Applies a request timeout (default 20s) and maps an abort/timeout to a
+ *   `PhoenixKeyError` with code "timeout" (status 0)
  */
 
 import { PhoenixKeyError } from "./types";
+
+/** Default per-request timeout in milliseconds. */
+export const DEFAULT_TIMEOUT_MS = 20_000;
 
 export type FetchOptions = RequestInit & {
   /** Override base URL for this request. */
@@ -16,6 +21,12 @@ export type FetchOptions = RequestInit & {
   bearerToken?: string;
   /** Parse response as JSON (default: true). Set false for SSE. */
   json?: boolean;
+  /**
+   * Per-request timeout in milliseconds. Default {@link DEFAULT_TIMEOUT_MS}
+   * (20s). Pass `0` to disable. Ignored if a `signal` is supplied by the caller
+   * (the caller then owns abort/timeout).
+   */
+  timeoutMs?: number;
 };
 
 /**
@@ -71,7 +82,7 @@ export function createFetcher(defaultBaseUrl: string) {
     path: string,
     opts: FetchOptions = {},
   ): Promise<T> {
-    const { baseUrl, bearerToken, json = true, headers, ...rest } = opts;
+    const { baseUrl, bearerToken, json = true, headers, timeoutMs, signal, ...rest } = opts;
 
     const base = (baseUrl ?? defaultBaseUrl).replace(/\/+$/, "");
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;
@@ -89,10 +100,28 @@ export function createFetcher(defaultBaseUrl: string) {
       finalHeaders.Authorization = `Bearer ${bearerToken}`;
     }
 
+    // Timeout: caller-supplied `signal` wins (caller owns abort). Otherwise
+    // arm an AbortSignal.timeout unless explicitly disabled with timeoutMs = 0.
+    const effectiveTimeout = timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const reqSignal =
+      signal ?? (effectiveTimeout > 0 ? AbortSignal.timeout(effectiveTimeout) : undefined);
+    const timedOut = !signal && effectiveTimeout > 0;
+
     let res: Response;
     try {
-      res = await fetch(url, { ...rest, headers: finalHeaders });
+      res = await fetch(url, { ...rest, headers: finalHeaders, signal: reqSignal });
     } catch (err) {
+      // AbortSignal.timeout aborts with a TimeoutError; a caller-aborted signal
+      // surfaces as an AbortError. Map our own timeout to a clear code.
+      const isAbort = err instanceof DOMException && err.name === "TimeoutError";
+      if (isAbort && timedOut) {
+        throw new PhoenixKeyError({
+          status: 0,
+          code: "timeout",
+          message: `Request timed out after ${effectiveTimeout}ms`,
+          userMessageKey: "errors.timeout",
+        });
+      }
       throw new PhoenixKeyError({
         status: 0,
         code: "network_error",
