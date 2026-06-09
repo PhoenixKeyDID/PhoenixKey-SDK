@@ -2,14 +2,14 @@
  * @phoenixkeydid/phoenixkey-sdk/verifier
  *
  * Verify-only sub-package for 3rd-party backends. Resolves a user DID's
- * public key, then verifies ECDSA secp256k1 DER signatures locally without
+ * public key, then verifies ECDSA P-256 (prime256v1) signatures locally without
  * touching the PhoenixKey relay server (Path A pattern).
  *
  * Use case: OriLife / AladinWork backend receives `{intent, signature}` from
  * its frontend → calls `verifier.verifyIntent(...)` → trusts the user_did.
  */
 
-import { secp256k1 } from "@noble/curves/secp256k1";
+import { p256 } from "@noble/curves/p256";
 import { sha256 } from "@noble/hashes/sha256";
 import { SignIntent, PhoenixKeyError } from "./types";
 
@@ -138,7 +138,7 @@ export class PhoenixKeyVerifier {
 
     try {
       const msgHash = sha256(messageBytes);
-      const valid = secp256k1.verify(hexToBytes(signatureHex), msgHash, hexToBytes(pubkeyHex));
+      const valid = p256.verify(hexToBytes(signatureHex), msgHash, hexToBytes(pubkeyHex));
       return { valid, user_did: userDid, reason: valid ? undefined : "signature_invalid" };
     } catch (e) {
       return {
