@@ -26,12 +26,47 @@ export const PREPROD_SLOT_ORIGIN_MS = 1666656000000;
 export const MAINNET_SLOT_ORIGIN_MS = 1596059091000;
 
 const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+const BECH32_GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 
-/** Decode a bech32 string (BIP-173) to its raw data bytes (checksum dropped). */
+/** BIP-173 polymod over the 5-bit values (HRP-expansion ∥ data ∥ checksum). */
+function bech32Polymod(values: number[]): number {
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) {
+      if ((top >>> i) & 1) chk ^= BECH32_GENERATOR[i];
+    }
+  }
+  return chk >>> 0;
+}
+
+/** Expand the human-readable part into 5-bit values per BIP-173. */
+function bech32HrpExpand(hrp: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < hrp.length; i++) out.push(hrp.charCodeAt(i) >>> 5);
+  out.push(0);
+  for (let i = 0; i < hrp.length; i++) out.push(hrp.charCodeAt(i) & 0x1f);
+  return out;
+}
+
+/**
+ * Decode a bech32 string (BIP-173) to its raw data bytes (checksum dropped).
+ *
+ * Verifies the 6-symbol BIP-173 checksum (polymod == 1) so a single mistyped
+ * character is rejected rather than silently decoded into a garbage key hash.
+ * Rejects mixed-case input (BIP-173 forbids it).
+ */
 function bech32ToBytes(addr: string): Uint8Array {
-  const s = addr.toLowerCase();
+  const lower = addr.toLowerCase();
+  const upper = addr.toUpperCase();
+  if (addr !== lower && addr !== upper) {
+    throw new Error("Invalid bech32 address (mixed case)");
+  }
+  const s = lower;
   const sep = s.lastIndexOf("1");
   if (sep < 1) throw new Error("Invalid bech32 address (no separator)");
+  const hrp = s.slice(0, sep);
   const values: number[] = [];
   for (const ch of s.slice(sep + 1)) {
     const v = BECH32_CHARSET.indexOf(ch);
@@ -39,6 +74,12 @@ function bech32ToBytes(addr: string): Uint8Array {
     values.push(v);
   }
   if (values.length < 6) throw new Error("bech32 data too short");
+
+  // Verify checksum before trusting any data symbols.
+  if (bech32Polymod([...bech32HrpExpand(hrp), ...values]) !== 1) {
+    throw new Error("Invalid bech32 address (bad checksum)");
+  }
+
   const data5 = values.slice(0, values.length - 6); // drop 6-char checksum
   let acc = 0;
   let bits = 0;
@@ -61,12 +102,26 @@ function bech32ToBytes(addr: string): Uint8Array {
  * Wallet_Key payment credential that holds LAMP and signs vault spends
  * (vault.ak: `datum.owner ∈ extra_signatories`).
  *
- * Throws if the payment credential is a script hash rather than a key hash.
+ * Throws if the credential is not a payment key hash — i.e. a script payment
+ * credential (CIP-19 types 1/3/5/7), or a reward/stake address (types 14/15)
+ * or any non-payment header (type > 7). The old code only masked the script
+ * low-bit, so a reward address (`stake`/`stake_test`, type 14 = `0b1110`)
+ * slipped through and its stake credential was returned as a bogus payment PKH.
  */
 export function paymentKeyHashFromAddress(address: string): string {
   const bytes = bech32ToBytes(address);
   if (bytes.length < 29) throw new Error("Address too short for a Shelley payment credential");
   const addrType = bytes[0] >> 4; // CIP-19 header: high nibble = address type
+
+  // Whitelist payment address types {0..7}. Types 14/15 are reward/stake
+  // accounts (no payment credential); 8 is Byron; others are undefined.
+  if (addrType > 7) {
+    throw new Error(
+      `Address type ${addrType} is not a payment address (reward/stake or non-Shelley) — ` +
+        "expected addr/addr_test (CIP-19 types 0-7), not stake/stake_test",
+    );
+  }
+  // Within payment types, odd types (1/3/5/7) carry a script payment credential.
   if (addrType & 0b0001) {
     throw new Error("Payment credential is a script hash, not a key hash — not a MAGIC owner key");
   }
