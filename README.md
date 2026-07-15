@@ -119,7 +119,7 @@ Verify signatures locally — no PhoenixKey server roundtrip per request.
 ```ts
 import { PhoenixKeyVerifier } from "@phoenixkeydid/phoenixkey-sdk/verifier";
 
-const verifier = new PhoenixKeyVerifier({ network: "mainnet" });
+const verifier = new PhoenixKeyVerifier();
 
 // In your route handler
 app.post("/orilife/transfer", async (req, res) => {
