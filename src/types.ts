@@ -74,7 +74,7 @@ export type LoginSessionStatus = {
   session_token?: string;
   /** 30-day token cho push-to-device flow lần sau. */
   linked_device_token?: string;
-  /** User's DID trên Cardano: `did:cardano:<network>:<txHash>`. */
+  /** User's DID: `did:phoenix:<slot>:<hash>`. */
   user_did?: string;
 };
 
