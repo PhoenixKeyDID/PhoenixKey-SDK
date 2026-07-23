@@ -59,7 +59,9 @@ export class PhoenixKeyClient {
     if (!config.appName) throw new Error("PhoenixKeyClient: appName required");
     if (!config.domain) throw new Error("PhoenixKeyClient: domain required");
 
-    const apiBaseUrl = config.apiBaseUrl ?? "https://api.phoenixkey.me";
+    // Every backend route lives under the `/api/v1` context path; the bare
+    // origin returns 404. Callers passing their own apiBaseUrl must include it.
+    const apiBaseUrl = config.apiBaseUrl ?? "https://api.phoenixkey.me/api/v1";
 
     this.config = {
       appId: config.appId,

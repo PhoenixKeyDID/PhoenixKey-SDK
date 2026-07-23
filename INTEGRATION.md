@@ -68,13 +68,22 @@ Bảng cho integrator (SuperApp) biết **build được vào cái gì NGAY**. C
 | Device recovery (Mode B) | `POST /identity/recover-device` (gắn HW key máy mới bằng TAAD_Key) | **READY** |
 | Seed export | `POST /seed/export-request` (rotate-before-reveal) | **READY** |
 | Sign-relay (web tạo intent, mobile ký) | `POST /sign/request` → `GET /sign/request/{id}` → `POST /sign/{id}/approve` (verify ECDSA + SSE trả sig) | **READY** |
-| Config/health | `GET /health/cardano` (trả `lampPolicyId`/`magicPolicyId`/network) · `GET /.well-known/jwks.json` | **READY** |
+| Config/health | `GET /health/cardano` (network, `lamp_policy_id`, hash+địa chỉ TAAD) · `GET /actuator/health` · `GET /.well-known/jwks.json` | **READY** (xem cảnh báo cấu hình bên dưới) |
 | **Sinh MAGIC từ LAMP** | vault accounting CHƯA nối — `GET /wallet/{did}/all` field `magic` trả 0 | **MISSING** (chờ MAGIC `did_commit` + Wakeme v5) |
-| **Gửi ADA** (build/submit tx tổng quát) | chưa có; chỉ activation có submit chuyên biệt. Client tự dựng+ký, cần submit path | **MISSING** |
+| **Gửi ADA** (build/submit tx tổng quát) | `POST /wallet/tx/submit` — client dựng+ký CBOR local, backend relay lên chain (không state). Khác `/activation/{id}/submit-tx` (gắn state machine activation) | **CHỜ MERGE** (Database PR #76) |
 | **Mint LAMP** | backend KHÔNG dựng/submit tx mint — dùng sign-relay cho mobile ký; policy mint on-chain (`lamp_policy`) | **PARTIAL** (relay only) |
-| **Tạo pool / SPO** | không có controller pool; mobile dựng cert (CIP-1852). Cần endpoint read `GET /v1/pools`, `/v1/pools/{id}`, `/v1/delegation/status` | **MISSING** |
+| **Pool — đọc** | `GET /pools?page=` · `GET /pools/{pool_id}` (số + metadata) · `GET /delegation/status/{stake_address}` (account chưa kích hoạt trả state đầy đủ, không 404) | **CHỜ MERGE** (Database PR #77) |
+| **Tạo pool / SPO — ký** | không có endpoint; mobile dựng + ký cert đăng ký pool (CIP-1852) rồi gửi qua `POST /wallet/tx/submit`. Backend không giữ khoá vận hành pool | **client-side** |
 
-> **⚠ Chặn deploy (P0, ngoài phạm vi code):** tại thời điểm rà, `api.phoenixkey.me` trả **404 mọi route** — backend chưa serve trên prod domain. Code phần lớn READY nhưng CHƯA deploy/served. Đây là việc deploy backend + hạ tầng, không phải phần integration. Integrator test được trên Preview/local; prod chờ deploy.
+> **Prod ĐANG SỐNG.** Base URL `https://api.phoenixkey.me/api/v1` — mọi route nằm dưới context-path `/api/v1`; gốc `https://api.phoenixkey.me/` trả 404 là **đúng hành vi**, không phải sự cố. Điểm kiểm nhanh:
+>
+> ```
+> GET https://api.phoenixkey.me/api/v1/actuator/health   → 200 {"status":"UP"}
+> GET https://api.phoenixkey.me/api/v1/health/cardano    → 200
+>      Swagger  https://api.phoenixkey.me/api/v1/swagger-ui.html
+> ```
+>
+> **⚠ Cấu hình prod còn thiếu (ảnh hưởng client):** `/health/cardano` hiện trả `lamp_policy_id` rỗng và `taad_script_address` / `taad_script_cbor_hex` / `taad_script_hash_history` rỗng. Client đối chiếu **policy-id** để chống token giả (fail-closed) → thiếu `lamp_policy_id` thì LAMP thật cũng bị chặn; thiếu địa chỉ/CBOR TAAD thì không dựng được tx chạm TAAD. Đây là biến môi trường chưa nạp trên prod, không phải thiếu code. `magic_policy_id` rỗng là **đúng** — MAGIC là tài khoản trong vault, không có policy-id.
 
 > **On-chain (tham chiếu):** 2-of-2 `controller_pkh ∧ device_pkh` đã canonical trong validator (`auth_logic.ak`, 463 test PASS) nhưng CHƯA re-apply vào deploy artifact — anchor/ví đang live là bản 1-of-1 cũ. `did_payment`/`did_stake`/`limit_meter_vault`/`activation_vault` compile+test xanh, phần lớn BUILT chưa deploy. Chỉ TAAD có UTxO thật trên Preview.
 
