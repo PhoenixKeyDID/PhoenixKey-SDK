@@ -67,7 +67,7 @@ Cột trạng thái:
 |---|---|---|
 | **Tạo DID** | `POST /identity/register` (Person) · `POST /identity/org/create` · `/identity/org/founding` · `POST /identity/asset/create` · resolve `GET /identity/{did}/document` · `/identifiers/{did}` (W3C) · `/identity/{did}/pubkey` · `/identity/{did}/status` | **READY** |
 | **Chữ ký phiên web** (QR-pairing) | `POST /auth/session/init` → `GET /auth/session/{id}/stream` (SSE) → mobile `POST /auth/session/{id}/approve` → web nhận `sessionToken` (JWT 1h) + `linkedDeviceToken` (30d); SSO `POST /auth/token/exchange` | **READY** |
-| **Nhận ADA / xem số dư** | `POST /wallet/register` (Phoenix custody) · `POST /wallet/standard/register` (CIP-1852) · `GET /wallet/{did}/all` · `GET /wallet/standard/{did}` (số dư ADA/LAMP/CARP từ Blockfrost) | **READY** |
+| **Nhận ADA / xem số dư** | `POST /wallet/register` (Phoenix custody) · `POST /wallet/standard/register` (CIP-1852) · `GET /wallet/{did}/all` · `GET /wallet/standard/{did}` (số dư ADA/LAMP/CARP từ Blockfrost). **Số lượng on-chain trả về là JSON _string_** (oildrop/lovelace/nanoMAGIC) — xem §"Hợp đồng số lớn" | **READY** (string-serialize: **CHỜ MERGE** Database PR #102) |
 | **GetLAMP v5** (khoá 1001 LAMP vào vault) | `POST /activation/getlamp/build` (dựng tx chưa ký vào-vault + khoá `conditional_lamp`) → client Enclave ký → `POST /activation/getlamp/submit` | **KHUNG** — chờ deploy validator `activation_vault` |
 | Vault Wakeme — đọc | `GET /activation/vault/{did}` (bảng điều khiển 2 pha) · `GET /activation/pot` (sức khoẻ pot + D hiện tại) | **KHUNG** — chờ deploy validator + Registry |
 | Activation cũ (luồng Genie) | `POST /activation/initiate` → `/activation/{id}/confirm-payment` → `/activation/{id}/submit-tx` · SSE `/activation/{id}/events` · `/status` · `/cancel` | **READY** — nhưng là mô hình cũ, GetLAMP v5 thay thế |
@@ -79,13 +79,41 @@ Cột trạng thái:
 | Config/health | `GET /health/cardano` (network, `lamp_policy_id`, hash+địa chỉ TAAD) · `GET /actuator/health` · `GET /.well-known/jwks.json` | **READY** (xem cảnh báo cấu hình bên dưới) |
 | **Sinh MAGIC từ số dư LAMP** | `GET /activation/vault/{did}/magic` (MAGIC hằng ngày — **đọc số dư**, không đụng LAMP) · `GET /activation/gen-entry` (ranh giới engine Gen ↔ SDK MAGIC). Trường `magic` trong `GET /wallet/{did}/all` hiện trả 0 | **KHUNG** — chờ engine Gen bên MAGIC. Hai đường chính thống: **InstantGen** (tiêu ngay) + **ScheduleGen** (các epoch sau). Không có đường thứ ba |
 | **Gửi ADA** (build/submit tx tổng quát) | `POST /wallet/tx/submit` — client dựng+ký CBOR local, backend relay lên chain (không state). Khác `/activation/{id}/submit-tx` (gắn state machine activation) | **CHỜ MERGE** (Database PR #76) |
-| **Mint LAMP** | backend KHÔNG dựng/submit tx mint — dùng sign-relay cho mobile ký; policy mint on-chain (`lamp_policy`) | **PARTIAL** (relay only) |
+| **Mint LAMP / nạp LAMP vào kho** | **KHÔNG phải endpoint PhoenixKey.** Backend không dựng/submit tx mint. LAMP là 1 policy cố-định-36-tỷ, đúc một lần bởi kho phân phối (`dist_treasury`, thuộc **MagicLamp/LAMP**) — không có "mint LAMP theo từng OrgDID". Nạp LAMP vào một kho = LAMP tooling (dist_treasury) gửi tới địa-chỉ-kho; PhoenixKey chỉ cấp OrgDID + địa-chỉ-kho. Tx thường (đã ký) relay qua `POST /wallet/tx/submit` | **ngoài phạm vi PhoenixKey** (→ LAMP) |
 | **Pool — đọc** | `GET /pools?page=` · `GET /pools/{pool_id}` (số + metadata) · `GET /delegation/status/{stake_address}` (account chưa kích hoạt trả state đầy đủ, không 404) | **CHỜ MERGE** (Database PR #77) |
 | **Tạo pool / SPO — ký** | không có endpoint; mobile dựng + ký cert đăng ký pool (CIP-1852) rồi gửi qua `POST /wallet/tx/submit`. Backend không giữ khoá vận hành pool | **client-side** |
 | Danh sách OrgDID | `GET /identity/org` **không tồn tại**. Chỉ có tạo (`/identity/org/create`, `/identity/org/founding`, `/identity/org/{orgDid}/upgrade-authority`) | **MISSING** — client tự giữ danh sách |
 | **Claim LAMP theo ETD / Airdrop / SRCL** | không có route nào (`/airdrop-claim/...` trả 404). Cơ chế Merkle + tham số đợt phát thuộc **LAMP**, không phải PhoenixKey | **MISSING** — chờ chốt ranh giới với LAMP |
 | Tên người dùng, thiết bị, nhật ký, hỗ trợ | `POST /identity/username` · `GET /identity/by-username/{username}` · `GET /identity/nodes` · `POST /devices/register` · `GET /activity-logs` · `POST /support/session/init` · `POST /tx/estimate` | **READY** (`/tx/estimate` trả phí cố định 200.000 lovelace, chưa ước lượng thật) |
 | ⚠ Tàn dư mô hình cũ — **đừng nối vào** | `POST /wallet/magic/claim` luôn trả **410 Gone** (MAGIC không đúc, không claim). `POST /activation/getmagic/{quote,checkout}` + `GET /activation/getmagic/{orderId}` là mua **CARP** bằng tiền pháp định — tên "GetMAGIC" là nhầm lẫn còn sót | **đang dọn** |
+
+### Mẫu OrgDID — `POST /identity/org/create` (single-owner)
+
+Đường **`/identity/org/create`** (KHÔNG phải `/identity/org` trơn — bản đó trả 404). Owner ký challenge canonical bằng HW_Key đang active của `ownerDid`.
+
+```
+POST /api/v1/identity/org/create
+Content-Type: application/json
+{
+  "ownerDid": "did:phoenix:<b32-13>:<hex-64>",   // PersonDID sở hữu, phải đã register
+  "name": "Công ty TNHH ABC",                     // 1–100 ký tự, KHÔNG cần duy nhất
+  "registrationNumber": "0312345678",             // tuỳ chọn (MST); "" nếu không có
+  "ownerSignature": "<hex>",                       // ECDSA/Ed25519 ký challenge dưới
+  "nonce": "<1–64 ký tự>"                          // dùng-1-lần theo (ownerDid,nonce)
+}
+
+challenge = "PHOENIXKEY_ORG_MINT:" + ownerDid + ":" + name + ":" + (registrationNumber||"") + ":" + nonce
+
+200 → { "code":1000, "message":"Org minted",
+        "result": { "orgDid":"did:phoenix:...", "ownerDid":"did:phoenix:...", "txHash":"<hex>" } }
+400 code 9800 thiếu field · 403 chữ ký owner sai · 404 ownerDid chưa register · 409 nonce đã dùng
+```
+
+`txHash` hiện là tx publish metadata-6789 (chuyển sang TAAD-UTxO-mint khi validator OrgDID deploy). `m-of-n`: `POST /identity/org/founding`; nâng single→threshold: `POST /identity/org/{orgDid}/upgrade-authority`.
+
+### Hợp đồng số lớn — số lượng on-chain là JSON _string_
+
+Tổng cung LAMP = 3,6×10¹⁶ oildrop > `Number.MAX_SAFE_INTEGER` (9,007×10¹⁵). Vì vậy các trường **số lượng đơn-vị-nhỏ-nhất** (`balances.{lovelace,lamp,carp}`, `magic.{available,accrued}`, `amountLamp/Lovelace`, `dOildrop`, `potBalanceLamp`) serialize thành **chuỗi**, không phải number — để `JSON.parse` không mất chữ số ở ví/kho lớn. Client parse bằng `BigInt`/`bigint`. Trường **slot/ngày/phase/đếm** vẫn là number. (Đổi này: Database PR #102, CHỜ MERGE — trước merge các trường trên còn là number.)
 
 > **Prod ĐANG SỐNG.** Base URL `https://api.phoenixkey.me/api/v1` — mọi route nằm dưới context-path `/api/v1`; gốc `https://api.phoenixkey.me/` trả 404 là **đúng hành vi**, không phải sự cố. Điểm kiểm nhanh:
 >
