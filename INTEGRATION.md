@@ -124,14 +124,15 @@ Content-Type: application/json
   "resource": "<pot-id / addr kho>",  // đích của action (≤200 ký tự), opaque với backend
   "amountLamp": "26000000000000000",  // oildrop (đơn-vị-nhỏ-nhất) — CHUỖI big-number
   "granteeDid": "did:phoenix:...",    // tuỳ chọn: bên được uỷ quyền thực thi (vd operator dist_treasury)
-  "validUntilSlot": 200000000,        // tuỳ chọn nhưng NÊN đặt hạn (slot)
+  "validTtlSeconds": 3600,            // tuỳ chọn, 60–604800: HẠN theo GIÂY (client KHÔNG cần đồng hồ slot)
   "ownerDid": "did:phoenix:...",      // controller single-owner của orgDid (phải == owner của org)
   "ownerSignature": "<hex>",          // ký challenge dưới
   "nonce": "<1–64 ký tự>"             // dùng-1-lần theo (ownerDid,nonce)
 }
 
 challenge = "PHOENIXKEY_ORG_LAMP:" + orgDid + ":" + action + ":" + amountLamp + ":"
-          + resource + ":" + (granteeDid||"") + ":" + (validUntilSlot||"") + ":" + nonce
+          + resource + ":" + (granteeDid||"") + ":" + (validTtlSeconds||"") + ":" + nonce
+// Server tự tính validFromSlot = tip hiện tại, validUntilSlot = validFromSlot + validTtlSeconds (≈1 slot/s).
 
 200 → { "code":1000, "message":"LAMP authorization grant issued",
         "result": { "grantId":"<uuid>", "grantorDid":"<orgDid>", "granteeDid":..., "action":"mint:LAMP",
