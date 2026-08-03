@@ -79,7 +79,8 @@ Cột trạng thái:
 | Config/health | `GET /health/cardano` (network, `lamp_policy_id`, hash+địa chỉ TAAD) · `GET /actuator/health` · `GET /.well-known/jwks.json` | **READY** (xem cảnh báo cấu hình bên dưới) |
 | **Sinh MAGIC từ số dư LAMP** | `GET /activation/vault/{did}/magic` (MAGIC hằng ngày — **đọc số dư**, không đụng LAMP) · `GET /activation/gen-entry` (ranh giới engine Gen ↔ SDK MAGIC). Trường `magic` trong `GET /wallet/{did}/all` hiện trả 0 | **KHUNG** — chờ engine Gen bên MAGIC. Hai đường chính thống: **InstantGen** (tiêu ngay) + **ScheduleGen** (các epoch sau). Không có đường thứ ba |
 | **Gửi ADA** (build/submit tx tổng quát) | `POST /wallet/tx/submit` — client dựng+ký CBOR local, backend relay lên chain (không state). Khác `/activation/{id}/submit-tx` (gắn state machine activation) | **CHỜ MERGE** (Database PR #76) |
-| **Mint LAMP / nạp LAMP vào kho** | **KHÔNG phải endpoint PhoenixKey.** Backend không dựng/submit tx mint. LAMP là 1 policy cố-định-36-tỷ, đúc một lần bởi kho phân phối (`dist_treasury`, thuộc **MagicLamp/LAMP**) — không có "mint LAMP theo từng OrgDID". Nạp LAMP vào một kho = LAMP tooling (dist_treasury) gửi tới địa-chỉ-kho; PhoenixKey chỉ cấp OrgDID + địa-chỉ-kho. Tx thường (đã ký) relay qua `POST /wallet/tx/submit` | **ngoài phạm vi PhoenixKey** (→ LAMP) |
+| **OrgDID uỷ-quyền thao tác LAMP** | `POST /identity/org/{orgDid}/mint-lamp` — OrgDID single-owner ký challenge → server phát **Grant** uỷ-quyền (`action` = `mint:LAMP`/`pot:fund`/`pot:distribute`). **KHÔNG đúc LAMP, KHÔNG submit tx** — chỉ verify chữ ký controller + phát Grant tự-verify (Anchorme §11.2). Xem mẫu §"Grant uỷ-quyền LAMP" | **CHỜ MERGE** (Database PR #119) |
+| **Đúc/nạp LAMP thật (bên tiêu Grant)** | **KHÔNG phải endpoint PhoenixKey.** LAMP là 1 policy cố-định-36-tỷ, đúc một lần bởi kho phân phối (`dist_treasury`, thuộc **MagicLamp/LAMP**) — không có "mint LAMP theo từng OrgDID". `dist_treasury` **tiêu Grant ở trên** để ráp+ký+submit tx thật; PhoenixKey chỉ cấp OrgDID + uỷ-quyền. Tx đã ký relay qua `POST /wallet/tx/submit` | **ngoài phạm vi PhoenixKey** (→ LAMP) |
 | **Pool — đọc** | `GET /pools?page=` · `GET /pools/{pool_id}` (số + metadata) · `GET /delegation/status/{stake_address}` (account chưa kích hoạt trả state đầy đủ, không 404) | **CHỜ MERGE** (Database PR #77) |
 | **Tạo pool / SPO — ký** | không có endpoint; mobile dựng + ký cert đăng ký pool (CIP-1852) rồi gửi qua `POST /wallet/tx/submit`. Backend không giữ khoá vận hành pool | **client-side** |
 | Danh sách OrgDID | `GET /identity/org` **không tồn tại**. Chỉ có tạo (`/identity/org/create`, `/identity/org/founding`, `/identity/org/{orgDid}/upgrade-authority`) | **MISSING** — client tự giữ danh sách |
@@ -110,6 +111,37 @@ challenge = "PHOENIXKEY_ORG_MINT:" + ownerDid + ":" + name + ":" + (registration
 ```
 
 `txHash` hiện là tx publish metadata-6789 (chuyển sang TAAD-UTxO-mint khi validator OrgDID deploy). `m-of-n`: `POST /identity/org/founding`; nâng single→threshold: `POST /identity/org/{orgDid}/upgrade-authority`.
+
+### Grant uỷ-quyền LAMP — `POST /identity/org/{orgDid}/mint-lamp`
+
+Nghĩa: OrgDID (GreenSun) là **danh tính ký/uỷ quyền** cho thao tác LAMP treasury/pot — **KHÔNG đúc token**. Endpoint verify controller của OrgDID đã ký, rồi phát **Grant** tự-verify (Anchorme §11.2). `dist_treasury` (MagicLamp) tiêu Grant để ráp+ký+submit tx thật. LAMP giữ cung cố-định 36 tỷ.
+
+```
+POST /api/v1/identity/org/{orgDid}/mint-lamp
+Content-Type: application/json
+{
+  "action": "mint:LAMP",              // mint:LAMP | pot:fund | pot:distribute
+  "resource": "<pot-id / addr kho>",  // đích của action (≤200 ký tự), opaque với backend
+  "amountLamp": "26000000000000000",  // oildrop (đơn-vị-nhỏ-nhất) — CHUỖI big-number
+  "granteeDid": "did:phoenix:...",    // tuỳ chọn: bên được uỷ quyền thực thi (vd operator dist_treasury)
+  "validUntilSlot": 200000000,        // tuỳ chọn nhưng NÊN đặt hạn (slot)
+  "ownerDid": "did:phoenix:...",      // controller single-owner của orgDid (phải == owner của org)
+  "ownerSignature": "<hex>",          // ký challenge dưới
+  "nonce": "<1–64 ký tự>"             // dùng-1-lần theo (ownerDid,nonce)
+}
+
+challenge = "PHOENIXKEY_ORG_LAMP:" + orgDid + ":" + action + ":" + amountLamp + ":"
+          + resource + ":" + (granteeDid||"") + ":" + (validUntilSlot||"") + ":" + nonce
+
+200 → { "code":1000, "message":"LAMP authorization grant issued",
+        "result": { "grantId":"<uuid>", "grantorDid":"<orgDid>", "granteeDid":..., "action":"mint:LAMP",
+                    "resource":..., "amountLamp":"26000000000000000", "validFromSlot":..., "validUntilSlot":...,
+                    "nonce":..., "status":"ISSUED", "signerDid":..., "signerPublicKeyHex":"<hex>",
+                    "signature":"<hex>", "canonicalChallenge":"PHOENIXKEY_ORG_LAMP:...", "revocable":true } }
+403 chữ ký sai / signer không phải controller · 404 orgDid không tồn tại · 409 nonce đã dùng · 409 org không single-owner (m-of-n chưa hỗ trợ) · 400 validUntilSlot đã quá hạn
+```
+
+`dist_treasury` xác minh Grant bằng cách re-verify `signature` trên `canonicalChallenge` với `signerPublicKeyHex` (controller HIỆN-TẠI của `grantorDid`) + còn hạn + chưa thu-hồi. `amountLamp` là CHUỖI oildrop — parse bằng `BigInt`.
 
 ### Hợp đồng số lớn — số lượng on-chain là JSON _string_
 
