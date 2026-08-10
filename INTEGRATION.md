@@ -169,7 +169,20 @@ challenge = "PHOENIXKEY_ORG_LAMP:" + org_did + ":" + action + ":" + amount_lamp 
 
 `dist_treasury` xác minh Grant bằng cách re-verify `signature` trên `canonical_challenge` với `signer_public_key_hex` (controller HIỆN-TẠI của `grantor_did`) + còn hạn + chưa thu-hồi. `amount_lamp` là CHUỖI oildrop — parse bằng `BigInt`.
 
-**Grant là năng lực dạng bearer khi `grantee_did` để trống** — nguyên văn hợp đồng: *null nghĩa là bất kỳ ai cầm Grant đều trình được cho `dist_treasury`*. Vì vậy: cất Enclave/Keychain, không AsyncStorage, và **luôn đặt `grantee_did`** = DID của operator `dist_treasury`. Đặt rồi thì lộ Grant không còn tự động thành mất tiền.
+**Grant là năng lực dạng bearer.** Cất Enclave/Keychain, KHÔNG AsyncStorage.
+
+> 🔴 **ĐÍNH CHÍNH 2026-08-10 — bản trước của mục này hứa một thứ không có gì đỡ.**
+>
+> Bản trước viết: *"luôn đặt `grantee_did` = DID của operator `dist_treasury`. Đặt rồi thì lộ Grant không còn tự động thành mất tiền."* **Sai.** Đặt `grantee_did` hiện KHÔNG đổi gì về mức rủi ro, vì không có chỗ nào kiểm nó:
+>
+> - **On-chain: không kiểm, và không kiểm được.** `dist_treasury` nhận đúng MỘT tham số `authority` (pkh) và toàn bộ thân spend là một dòng — `list.has(self.extra_signatories, authority)`. Nó không đọc datum, không đọc redeemer, và **không bao giờ nhìn thấy `grantee_did`**. Ai giữ khoá `authority` thì rút được, có Grant hay không, `grantee_did` điền hay để trống.
+> - **Backend: cũng không kiểm.** `granteeDid` được kiểm ĐỊNH DẠNG lúc phát (`OrgLampGrantRequest.java:68`), vào `canonical_challenge` ở vị trí thứ sáu (`OrgServiceImpl.java:385`), và lưu vào `OrgLampGrant.java:44`. Không có bên nào ĐỌC nó ra để so. Vì phía tiêu Grant chưa tồn tại (xem khối dưới), chưa có bên kiểm nào để mà kiểm.
+>
+> ⟹ **`grantee_did` hôm nay là một trường ghi-vào-sổ, không phải một cổng.** Nó ràng buộc chữ ký (đổi giá trị là đổi challenge là hỏng chữ ký), nhưng nó không ràng buộc **ai tiêu được**.
+>
+> **Vẫn nên điền**, vì hai lý do thật: (a) nó vào `canonical_challenge` nên nó ghi lại **ý định** của bên phát, dùng được cho đối soát và cho phía tiêu sau này; (b) khi phía tiêu ra đời, Grant đã phát mà bỏ trống thì không hồi tố siết được. Nhưng **đừng coi việc điền là một biện pháp giảm hại đang có hiệu lực** — biện pháp duy nhất đang có hiệu lực là cất kỹ.
+>
+> Để trống hợp lệ đúng một ca: lúc phát chưa biết operator là DID nào. Đó là **ngoại lệ có điều kiện**, không phải "tuỳ chọn".
 
 > **Phía TIÊU Grant chưa tồn tại — đọc trước khi lên lịch.** Trên `main` không có mã nào chuyển `status` khỏi `ISSUED`: không endpoint consume, không revoke, không tra cứu. `revocable: true` hiện là lời hứa chưa có cơ chế. Nghĩa là dựng luồng **lấy** Grant là đúng thứ tự và không phải làm lại — nhưng lấy được Grant KHÔNG có nghĩa LAMP chảy.
 
