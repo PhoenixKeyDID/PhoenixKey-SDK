@@ -29,7 +29,7 @@ did:phoenix
 ```abnf
 did-phoenix        = "did:phoenix:" slot-component ":" hash-component
 slot-component     = 13base32char         ; base32 of 8-byte big-endian slot (fixed 13 chars, no padding)
-base32char         = %x61-7A / DIGIT       ; RFC 4648 base32 alphabet, lowercase
+base32char         = %x61-7A / %x32-37     ; RFC 4648 base32 alphabet, lowercase (a-z 2-7)
 hash-component     = 64HEXDIG              ; BLAKE2b-256 hash, lowercase hex
 ```
 
@@ -46,9 +46,9 @@ hash = BLAKE2b-256( encode(entity_type) || (owner_did ?? "root") || encode(slot)
 did  = "did:phoenix:" || base32_nopad(slot) || ":" || hex(hash)
 ```
 
-**Example:**
+**Example** (slot `145000000`, whose 8-byte big-endian encoding base32s to exactly 13 characters):
 ```
-did:phoenix:aaaaaaq:3d7f9a1b2c4e56789012345678901234567890abcdef1234567890abcdef1234
+did:phoenix:aaaaaaaiusdea:3d7f9a1b2c4e56789012345678901234567890abcdef1234567890abcdef1234
 ```
 
 ---
