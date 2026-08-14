@@ -179,36 +179,48 @@ const { cardano_tx_hash } = await phoenix.wallet.claimMagic();
 
 ---
 
-## Step 6 — Activation package (200 k₫ → 1001 LAMP + 10 ADA)
+## Step 6 — Wakeme (vault LAMP → MAGIC → vesting)
+
+Wakeme is one name for what used to be three: *Activation*, *GetLAMP* and
+*GetMAGIC*. It runs under `/wakeme/*`.
 
 ```ts
-// 1. user clicks "Mua kích hoạt 200 k"
-const session = await phoenix.activation.initiate(userWalletAddress);
-// → { activation_id, payment_qr_url, proof_chat_url, genie_did, expires_at, ... }
+// 1. how much would a new user get right now?
+const pot = await phoenix.wakeme.getPotStatus();
+// → { pot_balance_lamp: "…", current_d_lamp, d_cap, scale, saturated }
 
-// 2. listen for lifecycle events (payment → activated)
-const stream = phoenix.activation.openEventStream(session.activation_id, {
-  onEvent: (evt) => {
-    if (evt.status === "ACTIVATED") {
-      // refresh balance — 1001 LAMP + 10 ADA arrived
-      stream.close();
-    }
-  },
-  onError: console.error,
+// 2. build the unsigned tx that moves D LAMP from the pot into the user's vault
+const build = await phoenix.wakeme.buildGetLamp({
+  wallet_address: userWalletAddress,
 });
+// → { unsigned_tx_cbor, required_signer_key_hash, vault_address, d_lamp, … }
 
-// 3. (testnet only) mock-confirm payment with admin token
-await phoenix.activation.mockConfirmPayment(session.activation_id, ADMIN_TOKEN);
+// 3. sign `unsigned_tx_cbor` in the Enclave, then hand it back
+const { cardano_tx_hash } = await phoenix.wakeme.submitGetLamp(signedCborHex);
 
-// — Genie side: after user paid 200 k, sign Cardano tx on mobile then:
-const { cardano_tx_hash, status } = await phoenix.activation.submitTx(
-  session.activation_id,
-  signedCborHex,
-);
+// 4. dashboard
+const vault = await phoenix.wakeme.getVaultStatus(userDid);
+// phase 1 = Daily (locked LAMP generates MAGIC, an idle day returns 1 LAMP to the pot)
+// phase 2 = Epochy (an epoch with enough MAGIC spent unlocks 5 LAMP into the wallet)
 ```
 
-Both modules accept the same `_getSessionToken` getter the rest of the SDK uses
-— `setSession(token, meta)` once, all modules read it.
+Locked LAMP is a **right of use**, not a loan — no interest, no ownership, no
+voting weight until it vests. Nothing is borrowed, nothing is owed.
+
+> **Endpoint status.** These routes are bound and their payloads are settled,
+> but the service answers `501 NOT_YET_IMPLEMENTED` until the vault validator is
+> deployed and the pot is funded. Build the UI now; the shapes will not move.
+
+The SDK never builds or parses redeemer CBOR — the server assembles the
+transaction, the Enclave signs it.
+
+`phoenix.activation` still resolves to the same module, deprecated, for one
+release. Every module reads the same `_getSessionToken` getter — call
+`setSession(token, meta)` once.
+
+The **200 k₫ → 1001 LAMP + 10 ADA package through a Genie agent is retired**.
+`initiate()` / `mockConfirmPayment()` / `submitTx()` are marked `@deprecated`
+and still call `/activation/*`, which has no `/wakeme/*` counterpart.
 
 ---
 

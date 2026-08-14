@@ -24,7 +24,7 @@ import { FeesModule } from "./fees";
 import { NetworkModule } from "./network";
 import { SupportModule } from "./support";
 import { WalletModule } from "./wallet";
-import { ActivationModule } from "./activation";
+import { WakemeModule } from "./wakeme";
 import * as session from "./session";
 
 export class PhoenixKeyClient {
@@ -46,8 +46,8 @@ export class PhoenixKeyClient {
   readonly support: SupportModule;
   /** Wallet balance + MAGIC accrual + claim (testnet release). */
   readonly wallet: WalletModule;
-  /** Activation package flow — 200k VND → 1001 LAMP + 10 ADA via Genie. */
-  readonly activation: ActivationModule;
+  /** Wakeme model A — vault GetLAMP, MAGIC yield, pot, GetMAGIC (spec §115). */
+  readonly wakeme: WakemeModule;
 
   /** localStorage helpers. */
   readonly session: typeof session;
@@ -107,11 +107,19 @@ export class PhoenixKeyClient {
     this.network = new NetworkModule(this.config.apiBaseUrl);
     this.support = new SupportModule(this.config.apiBaseUrl);
     this.wallet = new WalletModule(this.config.apiBaseUrl, session.getSessionToken);
-    this.activation = new ActivationModule(
+    this.wakeme = new WakemeModule(
       this.config.apiBaseUrl,
       this.config.sseBaseUrl,
       session.getSessionToken,
     );
+  }
+
+  /**
+   * @deprecated Renamed to {@link wakeme}. Returns the very same instance, so
+   * `phoenix.activation.*` keeps working for one release while callers move.
+   */
+  get activation(): WakemeModule {
+    return this.wakeme;
   }
 
   /**
