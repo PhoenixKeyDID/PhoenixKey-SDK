@@ -18,13 +18,27 @@ export type VerifierConfig = {
   /** PhoenixKey API base URL. Default: "https://api.phoenixkey.me". */
   phoenixkeyApiUrl?: string;
   /**
-   * TTL for the in-memory pubkey cache, ms. Default: 5 minutes.
-   *
-   * ⚠ This cache has no invalidation path, so a revoked key keeps verifying
-   * until the entry expires. Set this to `0` for security-critical flows until
-   * issue #11 lands (`/identity/{did}/pubkey` gaining `keyId` + `status`).
+   * Upper bound on how long a resolved key may stay in the in-memory cache, ms.
+   * Default: 5 minutes. This is a ceiling, never a guarantee — an entry is only
+   * cached at all when the resolver can tell whether it is still the live key
+   * (see `allowUnidentifiedKeyCache`).
    */
   cacheTtlMs?: number;
+  /**
+   * Cache keys even when `/identity/{did}/pubkey` returns no `key_id`/`status`.
+   * Default: `false`.
+   *
+   * A response without `key_id` carries no way to notice a rotation, so caching
+   * it means a key revoked right now keeps verifying until the TTL runs out —
+   * exactly the window a thief needs after the victim rotates. Leaving this
+   * `false` trades one lookup per verification for closing that window.
+   *
+   * Turn it on only when the extra round trip is genuinely unaffordable and the
+   * flow is not security-critical. Once the backend ships `key_id` (see
+   * PhoenixKey-Database#175) this flag stops mattering: identified keys are
+   * cached regardless.
+   */
+  allowUnidentifiedKeyCache?: boolean;
   /**
    * Accept the legacy `${challenge}:${domain}:${timestamp}` message form in
    * addition to the `PHOENIXKEY_RP_AUTH:v1` envelope. Default: `true` during
@@ -66,15 +80,26 @@ export type VerifyResult = {
 const DEFAULT_CACHE_TTL = 5 * 60 * 1000;
 const TIMESTAMP_SKEW_SEC = 60;
 
+/** What `/identity/{did}/pubkey` gives back, once unwrapped from the envelope. */
+export type ResolvedKey = {
+  publicKeyHex: string;
+  /** `authorized_keys.id` — absent until PhoenixKey-Database#175 ships. */
+  keyId?: string;
+  /** `active` | `revoked` — absent until PhoenixKey-Database#175 ships. */
+  status?: string;
+};
+
 export class PhoenixKeyVerifier {
   private readonly phoenixkeyApiUrl: string;
-  private readonly cache = new Map<string, { pubkey: string; expiresAt: number }>();
+  private readonly cache = new Map<string, { key: ResolvedKey; expiresAt: number }>();
   private readonly cacheTtl: number;
+  private readonly allowUnidentifiedKeyCache: boolean;
   private readonly acceptLegacyEnvelope: boolean;
 
   constructor(config: VerifierConfig = {}) {
     this.phoenixkeyApiUrl = (config.phoenixkeyApiUrl ?? "https://api.phoenixkey.me").replace(/\/+$/, "");
     this.cacheTtl = config.cacheTtlMs ?? DEFAULT_CACHE_TTL;
+    this.allowUnidentifiedKeyCache = config.allowUnidentifiedKeyCache ?? false;
     this.acceptLegacyEnvelope = config.acceptLegacyEnvelope ?? true;
   }
 
@@ -128,13 +153,52 @@ export class PhoenixKeyVerifier {
 
   /** Resolve pubkey (cached) — exposed for advanced use cases. */
   async resolvePubkey(userDid: string): Promise<string> {
+    return (await this.resolveKey(userDid)).publicKeyHex;
+  }
+
+  /**
+   * Resolve the full key record — hex, and (when the backend supplies them)
+   * `keyId` + `status`.
+   *
+   * A key is only cached when the response identifies it (`key_id` present),
+   * because without an identifier there is nothing to notice a rotation by.
+   * A revoked key is rejected outright, never cached, and never verified
+   * against.
+   */
+  async resolveKey(userDid: string): Promise<ResolvedKey> {
     const cached = this.cache.get(userDid);
-    if (cached && cached.expiresAt > Date.now()) return cached.pubkey;
+    if (cached && cached.expiresAt > Date.now()) return cached.key;
+    if (cached) this.cache.delete(userDid);
 
-    const pubkey = await this.resolveViaPhoenixKey(userDid);
+    const key = await this.resolveViaPhoenixKey(userDid);
 
-    this.cache.set(userDid, { pubkey, expiresAt: Date.now() + this.cacheTtl });
-    return pubkey;
+    if (key.status !== undefined && key.status.toLowerCase() !== "active") {
+      throw new PhoenixKeyError({
+        status: 200,
+        code: "key_revoked",
+        message: `Authorized key for ${userDid} is not active (status=${key.status})`,
+      });
+    }
+
+    // No `keyId` ⇒ a later rotation is invisible to us ⇒ do not hold the key.
+    if (key.keyId !== undefined || this.allowUnidentifiedKeyCache) {
+      this.cache.set(userDid, { key, expiresAt: Date.now() + this.cacheTtl });
+    }
+    return key;
+  }
+
+  /**
+   * Drop a cached key. Call this the moment you learn a DID rotated — a
+   * revocation webhook, a failed verification, a support ticket. Returns
+   * whether an entry was actually held.
+   */
+  invalidate(userDid: string): boolean {
+    return this.cache.delete(userDid);
+  }
+
+  /** Drop every cached key. */
+  clearCache(): void {
+    this.cache.clear();
   }
 
   private async verifySignatureFor(
@@ -144,12 +208,13 @@ export class PhoenixKeyVerifier {
   ): Promise<VerifyResult> {
     let pubkeyHex: string;
     try {
-      pubkeyHex = await this.resolvePubkey(userDid);
+      pubkeyHex = (await this.resolveKey(userDid)).publicKeyHex;
     } catch (e) {
+      const code = e instanceof PhoenixKeyError ? e.code : "resolve_failed";
       return {
         valid: false,
         user_did: userDid,
-        reason: `resolve_failed: ${e instanceof Error ? e.message : String(e)}`,
+        reason: `${code}: ${e instanceof Error ? e.message : String(e)}`,
       };
     }
 
@@ -166,7 +231,7 @@ export class PhoenixKeyVerifier {
     }
   }
 
-  private async resolveViaPhoenixKey(userDid: string): Promise<string> {
+  private async resolveViaPhoenixKey(userDid: string): Promise<ResolvedKey> {
     const url = `${this.phoenixkeyApiUrl}/identity/${encodeURIComponent(userDid)}/pubkey`;
     const res = await fetch(url, { headers: { Accept: "application/json" } });
     if (!res.ok) {
@@ -176,10 +241,19 @@ export class PhoenixKeyVerifier {
         message: `PhoenixKey pubkey lookup failed: ${res.status}`,
       });
     }
-    const body = (await res.json()) as { code?: number; result?: { public_key_hex: string } };
+    // Field names on the wire are snake_case — the backend sets
+    // `spring.jackson.property-naming-strategy: SNAKE_CASE` globally.
+    const body = (await res.json()) as {
+      code?: number;
+      result?: { public_key_hex?: string; key_id?: string; status?: string };
+    };
     const pubkey = body?.result?.public_key_hex;
     if (!pubkey) throw new Error("Empty pubkey in response");
-    return pubkey;
+    return {
+      publicKeyHex: pubkey,
+      keyId: body.result?.key_id,
+      status: body.result?.status,
+    };
   }
 }
 

@@ -188,9 +188,11 @@ cho ai là lỗi thiết kế, và không khuôn nào chữa được: khuôn r�
 `domain`, nhưng nếu người dùng không thấy `domain` thì họ vẫn ký cho bất cứ ai
 hỏi. Việc này ở app, không ở đây.
 
-**Đệm khoá công khai đang hở.** `verifier.ts` đệm khoá 5 phút và không có đường
-vô hiệu hoá, nên sau khi nạn nhân xoay khoá thì khoá cũ còn kiểm được tới 5 phút.
-Chi tiết và hướng sửa ở issue #11. Trong lúc chờ, luồng nào cần chắc thì đặt
-`cacheTtlMs: 0`.
+**Đệm khoá công khai — đã đóng, nhưng đọc kỹ mặc định.** `verifier.ts` chỉ đệm
+khoá khi phản hồi định danh được nó (`key_id`). Backend hôm nay chưa trả trường
+đó, nên hành vi thực tế là tra mỗi lần kiểm: mất một lượt gọi, đổi lấy đóng hẳn
+cửa sổ khoá-đã-thu-hồi sau xoay khoá (issue #11). Bên nào không kham được lượt
+gọi đó thì phải khai rõ `allowUnidentifiedKeyCache: true` — và nhận lại cửa sổ
+đúng bằng `cacheTtlMs`.
 
 Phoenix agent

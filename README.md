@@ -114,7 +114,10 @@ await phoenix.signRequest.create(sessionId, intent);
 
 ## Step 4 — Verify on your backend
 
-Verify signatures locally — no PhoenixKey server roundtrip per request.
+Signature verification happens **locally** — the private key never leaves the
+user's device and PhoenixKey never sees the payload. What the verifier does need
+from the server is the user's current public key (see *Key rotation and the key
+cache* below).
 
 ```ts
 import { PhoenixKeyVerifier } from "@phoenixkeydid/phoenixkey-sdk/verifier";
@@ -150,6 +153,36 @@ if (r.valid) {
   // Issue your own session for the user — they're authenticated
 }
 ```
+
+### Key rotation and the key cache
+
+People rotate a key **after it has been stolen**. Every millisecond the old key
+stays accepted is a millisecond the thief can still sign. So the verifier holds a
+resolved key only while it can tell the key is still the live one:
+
+| what `/identity/{did}/pubkey` returns | what the verifier does |
+|---|---|
+| `key_id` + `status: active` | caches it, up to `cacheTtlMs` (default 5 min) |
+| `key_id` + any other `status` | refuses — `reason` starts with `key_revoked:` |
+| no `key_id` (today's backend) | **does not cache** — resolves on every verification |
+
+The third row is the safe default: with nothing to identify the key by, a cached
+entry cannot notice a rotation, so the SDK pays one lookup per verification
+instead. It costs a round trip; it removes the window entirely.
+
+Two escapes, both explicit:
+
+```ts
+// 1. Trade the window back for the round trip. Non-critical flows only.
+const verifier = new PhoenixKeyVerifier({ allowUnidentifiedKeyCache: true });
+
+// 2. Drop an entry the moment you learn a DID rotated.
+verifier.invalidate(user_did);
+verifier.clearCache();
+```
+
+`cacheTtlMs` is a **ceiling, never a promise** — an entry may be dropped sooner,
+and may never be created at all.
 
 ---
 
