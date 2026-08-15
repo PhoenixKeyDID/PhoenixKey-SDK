@@ -200,6 +200,17 @@ export type IdentityHealth = {
 };
 
 /**
+ * Kết quả tra username → DID (GET /identity/by-username/{username}).
+ *
+ * `username` trả về là dạng đã chuẩn hoá của backend, có thể khác chuỗi đã gửi
+ * đi (hạ chữ thường, cắt khoảng trắng) — hiển thị thì dùng giá trị này.
+ */
+export type UsernameResolve = {
+  username: string;
+  user_did: string;
+};
+
+/**
  * W3C DID Core Document — ngoại lệ camelCase (W3C spec compliance).
  * Trả về từ GET /identity/{did}/document — đọc từ Cardano inline datum.
  */

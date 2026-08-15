@@ -68,6 +68,7 @@ export type {
   IdentityPubkey,
   IdentityStatus,
   IdentityHealth,
+  UsernameResolve,
   W3CDIDDocument,
   // Activity
   ActivityLogItem,
