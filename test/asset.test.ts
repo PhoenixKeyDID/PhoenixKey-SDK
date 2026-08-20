@@ -3,8 +3,10 @@ import {
   ASSET_ERROR_CODES,
   AssetModule,
   buildAssetMintChallenge,
+  computeAssetCommitment,
   isAllowedAssetClass,
   LOCATION_PROOF_MAX_LENGTH,
+  verifyAssetCommitment,
 } from "../src/asset";
 import { PhoenixKeyError } from "../src/types";
 
@@ -186,6 +188,140 @@ describe("buildAssetMintChallenge — chống nhập nhằng khung (lý do bỏ 
       }),
     );
     expect(a).not.toBe(b);
+  });
+});
+
+// ─── computeAssetCommitment / verifyAssetCommitment — vector tuyệt đối ───────
+// Mọi hex dưới đây LITERAL, sinh bằng cách hiện thực lại
+// CanonicalMessage.build (prefix PHOENIXKEY_ASSET_COMMIT: + field đóng khung
+// 4-byte-độ-dài-big-endian, KHÔNG có ownerDid/nonce) + sha256 bằng python3,
+// đúng công thức AssetCanonical.commitment(salt, physicalIdHash, assetClass,
+// locationProof). KHÔNG do computeAssetCommitment tự tính ra.
+
+/** Muối 1 — 64 ký tự hex, dùng cho phần lớn vector dưới đây. */
+const SALT_1 = "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1";
+/** Muối 2 — khác SALT_1, dùng để chứng minh cùng dữ liệu + muối khác ⇒ cam kết khác. */
+const SALT_2 = "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2";
+/** physicalIdHash SAI — lệch 1 ký tự so với PHYSICAL_ID_HASH ("3a" → "3b"). */
+const WRONG_PHYSICAL_ID_HASH = "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b";
+
+/** salt=SALT_1, physicalIdHash=PHYSICAL_ID_HASH, assetClass="tree", locationProof="zoneA". */
+const COMMIT_BASE = "262839c11806df194d290eb58b754370ac528d6370d0c7154fde78a32c85967c";
+/** Như trên nhưng salt=SALT_2 — cùng dữ liệu, muối khác ⇒ cam kết khác. */
+const COMMIT_SALT2 = "0ec76b77339c9890962c2483d78b4b0f5c72e8594c81d0629f56998157efd3a2";
+/** Như COMMIT_BASE nhưng physicalIdHash sai. */
+const COMMIT_WRONG_PHYS = "6d19700dd61d89e99b88c98c44dd429c05994febff446dbc30c6c96338830741";
+/** Như COMMIT_BASE nhưng assetClass="farm" thay vì "tree". */
+const COMMIT_WRONG_CLASS = "7314f2695010828cb59dfec1142bdea1bd3bf61c99e27abf49fa84a03dabdc2f";
+/** Như COMMIT_BASE nhưng locationProof="zoneB" thay vì "zoneA". */
+const COMMIT_WRONG_LOC = "3982ee6d85d77eef4dd142d86b17892562b5ab523c7ce23579c16e3dbb66e333";
+/** Như COMMIT_BASE nhưng locationProof vắng mặt (null) — cờ "0", giá trị rỗng. */
+const COMMIT_LOCATION_NULL = "0ec7a5a31918777261978d3d09ddb8518e0c2149159f52654bb599a5781f3533";
+
+function commitInput(over: Partial<Parameters<typeof computeAssetCommitment>[0]> = {}) {
+  return {
+    salt: SALT_1,
+    physicalIdHash: PHYSICAL_ID_HASH,
+    assetClass: "tree",
+    locationProof: "zoneA",
+    ...over,
+  };
+}
+
+describe("computeAssetCommitment — vector tuyệt đối", () => {
+  it("khớp cam kết Java (trường hợp nền: salt1, tree, zoneA)", () => {
+    expect(computeAssetCommitment(commitInput())).toBe(COMMIT_BASE);
+  });
+
+  it("trả hex thường 64 ký tự", () => {
+    const c = computeAssetCommitment(commitInput());
+    expect(c).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("locationProof vắng (null) khớp vector riêng", () => {
+    expect(computeAssetCommitment(commitInput({ locationProof: null }))).toBe(
+      COMMIT_LOCATION_NULL,
+    );
+  });
+});
+
+describe("verifyAssetCommitment — kỷ luật muối (≥4 test bắt buộc)", () => {
+  // (a) cùng dữ liệu + muối khác ⇒ cam kết khác
+  it("(a) cùng dữ liệu, muối khác nhau ⇒ cam kết khác nhau", () => {
+    const c1 = computeAssetCommitment(commitInput({ salt: SALT_1 }));
+    const c2 = computeAssetCommitment(commitInput({ salt: SALT_2 }));
+    expect(c1).toBe(COMMIT_BASE);
+    expect(c2).toBe(COMMIT_SALT2);
+    expect(c1).not.toBe(c2);
+  });
+
+  // (b) muối đúng + dữ liệu đúng ⇒ khớp
+  it("(b) muối đúng + dữ liệu đúng ⇒ verifyAssetCommitment trả true", () => {
+    expect(
+      verifyAssetCommitment({ ...commitInput(), commitment: COMMIT_BASE }),
+    ).toBe(true);
+  });
+
+  it("(b) so khớp KHÔNG phân biệt hoa/thường của commitment truyền vào", () => {
+    expect(
+      verifyAssetCommitment({
+        ...commitInput(),
+        commitment: COMMIT_BASE.toUpperCase(),
+      }),
+    ).toBe(true);
+  });
+
+  // (c) sai BẤT KỲ một trường ⇒ lệch
+  it.each([
+    ["salt", { salt: SALT_2 }],
+    ["physicalIdHash", { physicalIdHash: WRONG_PHYSICAL_ID_HASH }],
+    ["assetClass", { assetClass: "farm" }],
+    ["locationProof", { locationProof: "zoneB" }],
+  ])("(c) sai trường %s ⇒ verifyAssetCommitment trả false", (_label, over) => {
+    expect(
+      verifyAssetCommitment({ ...commitInput(), ...over, commitment: COMMIT_BASE }),
+    ).toBe(false);
+  });
+
+  it("(c) commitment on-chain bị sửa 1 ký tự ⇒ trả false", () => {
+    const tampered = "0" + COMMIT_BASE.slice(1);
+    expect(verifyAssetCommitment({ ...commitInput(), commitment: tampered })).toBe(false);
+  });
+
+  // (d) muối rỗng/thiếu ⇒ KHÔNG được im lặng trả true
+  it('(d) salt="" ⇒ ném lỗi, KHÔNG trả true', () => {
+    expect(() =>
+      verifyAssetCommitment({ ...commitInput(), salt: "", commitment: COMMIT_BASE }),
+    ).toThrow(/salt phải là chuỗi hex/);
+  });
+
+  it("(d) salt thiếu hẳn (undefined) ⇒ ném lỗi, KHÔNG trả true", () => {
+    const { salt: _omitted, ...withoutSalt } = commitInput();
+    expect(() =>
+      verifyAssetCommitment({ ...withoutSalt, commitment: COMMIT_BASE } as never),
+    ).toThrow(/salt phải là chuỗi hex/);
+  });
+
+  it("(d) salt sai độ dài (63 ký tự thay vì 64) ⇒ ném lỗi, KHÔNG trả true", () => {
+    expect(() =>
+      verifyAssetCommitment({
+        ...commitInput(),
+        salt: SALT_1.slice(0, 63),
+        commitment: COMMIT_BASE,
+      }),
+    ).toThrow(/salt phải là chuỗi hex/);
+  });
+
+  it("(d) computeAssetCommitment cũng ném lỗi cho salt thiếu — không có preimage giả", () => {
+    expect(() => computeAssetCommitment(commitInput({ salt: undefined as never }))).toThrow(
+      /salt phải là chuỗi hex/,
+    );
+  });
+
+  it("commitment rỗng ⇒ ném lỗi thay vì so sánh mù", () => {
+    expect(() =>
+      verifyAssetCommitment({ ...commitInput(), commitment: "" }),
+    ).toThrow(/commitment rỗng\/thiếu/);
   });
 });
 
@@ -405,8 +541,8 @@ describe("AssetModule.createAsset — map lỗi", () => {
     [1341, 403, "owner_signature_invalid"],
     [1342, 409, "physical_id_already_claimed"],
     [1346, 400, "owner_cannot_own_asset"],
-    [1353, 400, "asset_class_not_allowed"],
-    [1354, 404, "owner_key_not_found"],
+    [1380, 400, "asset_class_not_allowed"],
+    [1381, 404, "owner_key_not_found"],
   ])("mã thô %i → code \"%s\"", async (raw, status, expected) => {
     mockFetch(async () => errorResponse(raw as number, status as number));
     const asset = new AssetModule(BASE, () => "jwt-abc");
@@ -430,14 +566,29 @@ describe("AssetModule.createAsset — map lỗi", () => {
     });
   });
 
+  it.each([1353, 1354, 1355])(
+    "KHÔNG nhận %i — số đã NGHỈ HƯU (Wakeme v5 #67), giữ trống có chủ ý",
+    async (raw) => {
+      // 1353-1355 từng là NOT_IN_PHASE2/CLAIM_AMOUNT_EXCEEDS_VESTED/ALREADY_IN_PHASE2,
+      // đã bỏ. Client cũ nào còn cầm số này không được SDK dịch hộ thành tên asset —
+      // đó là gọi tên sai đúng lớp lỗi vừa vá.
+      mockFetch(async () => errorResponse(raw, 400));
+      const asset = new AssetModule(BASE, () => "jwt-abc");
+      await expect(asset.createAsset(REQUEST)).rejects.toMatchObject({
+        code: "http_400",
+        rawCode: raw,
+      });
+    },
+  );
+
   it("ghim bảng ASSET_ERROR_CODES bằng literal", () => {
     expect(ASSET_ERROR_CODES).toEqual({
       1340: "owner_did_not_found",
       1341: "owner_signature_invalid",
       1342: "physical_id_already_claimed",
       1346: "owner_cannot_own_asset",
-      1353: "asset_class_not_allowed",
-      1354: "owner_key_not_found",
+      1380: "asset_class_not_allowed",
+      1381: "owner_key_not_found",
     });
   });
 
@@ -468,6 +619,92 @@ describe("AssetModule.createAsset — map lỗi", () => {
     await expect(asset.createAsset(REQUEST)).rejects.toMatchObject({
       code: "http_400",
       rawCode: 1399,
+    });
+  });
+});
+
+// ─── AssetModule.checkCommitment ──────────────────────────────────────────────
+
+const ASSET_DID = "did:phoenix:mfx7q2wl3k5np:" + "11".repeat(32);
+
+const COMMITMENT_CHECK_MATCH = {
+  did: ASSET_DID,
+  status: "MATCH",
+  on_chain_commitment: COMMIT_BASE,
+  recomputed_commitment: COMMIT_BASE,
+  commitment_salt: SALT_1,
+  asset_class: "tree",
+  genesis_tx_hash: "ab".repeat(32),
+};
+
+describe("AssetModule.checkCommitment — đường dây", () => {
+  it("GET đúng /identity/{did}/commitment-check trên base URL đã cấu hình", async () => {
+    let seenUrl = "";
+    let seenMethod = "";
+    mockFetch(async (url, init) => {
+      seenUrl = url;
+      seenMethod = String(init.method);
+      return okResponse(COMMITMENT_CHECK_MATCH);
+    });
+
+    const asset = new AssetModule(BASE, () => "jwt-abc");
+    await expect(asset.checkCommitment(ASSET_DID)).resolves.toEqual(COMMITMENT_CHECK_MATCH);
+    expect(seenUrl).toBe(`${BASE}/identity/${encodeURIComponent(ASSET_DID)}/commitment-check`);
+    expect(seenMethod).toBe("GET");
+  });
+
+  it("gắn Authorization: Bearer khi có session token", async () => {
+    let seenAuth: string | undefined;
+    mockFetch(async (_url, init) => {
+      seenAuth = (init.headers as Record<string, string>).Authorization;
+      return okResponse(COMMITMENT_CHECK_MATCH);
+    });
+
+    const asset = new AssetModule(BASE, () => "jwt-abc");
+    await asset.checkCommitment(ASSET_DID);
+    expect(seenAuth).toBe("Bearer jwt-abc");
+  });
+
+  it("thiếu session token ⇒ ném TẠI CLIENT, KHÔNG chạm mạng", async () => {
+    // Endpoint đòi Bearer (không nằm trong PUBLIC_GET của AuthRequiredInterceptor) —
+    // gửi đi để nhận 401 không nói thêm được gì mà người gọi đã biết trước.
+    const spy = mockFetch(async () => okResponse(COMMITMENT_CHECK_MATCH));
+
+    const asset = new AssetModule(BASE, () => null);
+    await expect(asset.checkCommitment(ASSET_DID)).rejects.toThrow(
+      "No session token — user must login first",
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it.each(["MATCH", "MISMATCH", "NO_COMMITMENT_LEGACY", "NO_SALT_UNVERIFIABLE", "NOT_ANCHORED", "NOT_AN_ASSET"])(
+    "map đủ trạng thái \"%s\" không gộp/đổi tên",
+    async (status) => {
+      const payload = { ...COMMITMENT_CHECK_MATCH, status };
+      mockFetch(async () => okResponse(payload));
+      const asset = new AssetModule(BASE, () => "jwt-abc");
+      const result = await asset.checkCommitment(ASSET_DID);
+      expect(result.status).toBe(status);
+    },
+  );
+
+  it("lỗi mạng vẫn là network_error", async () => {
+    mockFetch(async () => {
+      throw new TypeError("connection refused");
+    });
+    const asset = new AssetModule(BASE, () => "jwt-abc");
+    await expect(asset.checkCommitment(ASSET_DID)).rejects.toMatchObject({
+      code: "network_error",
+      status: 0,
+    });
+  });
+
+  it("DID lạ ⇒ dùng mã lỗi TOÀN CỤC (user_did_not_found = 2002), không qua ASSET_ERROR_CODES", async () => {
+    mockFetch(async () => errorResponse(2002, 404));
+    const asset = new AssetModule(BASE, () => "jwt-abc");
+    await expect(asset.checkCommitment(ASSET_DID)).rejects.toMatchObject({
+      code: "user_did_not_found",
+      rawCode: 2002,
     });
   });
 });

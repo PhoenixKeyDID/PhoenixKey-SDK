@@ -5,13 +5,19 @@
  * do một PersonDID / OrgDID / ServiceDID sở hữu.
  * Backend endpoint: POST /identity/asset/create.
  *
+ * Cũng cấp phần đối chiếu cam kết on-chain (`GET /identity/{did}/commitment-check`)
+ * và hàm kiểm cam kết thuần client `verifyAssetCommitment`.
+ *
  * Hợp đồng canonical ở đây chép từ mã Java thật, KHÔNG suy đoán:
  * - `PhoenixKey-Database/.../service/identity/AssetCanonical.java`
  * - `PhoenixKey-Database/.../common/CanonicalMessage.java`
  * - `PhoenixKey-Database/.../dto/identity/AssetCreate{Request,Response}.java`
+ * - `PhoenixKey-Database/.../dto/identity/CommitmentCheck{Status,Response}.java`
  * - `PhoenixKey-Database/.../controller/IdentityController.java`
+ * - `PhoenixKey-Database/.../exception/ErrorCode.java`
  */
 
+import { sha256 } from "@noble/hashes/sha256";
 import { createFetcher, FetchOptions } from "./fetcher";
 import { PhoenixKeyError } from "./types";
 
@@ -32,7 +38,7 @@ export const LOCATION_PROOF_MAX_LENGTH = 120;
 /**
  * Tập `assetClass` ĐÓNG — chép nguyên từ
  * `AssetCanonical.ALLOWED_ASSET_CLASSES`. Ngoài tập ⇒ backend từ chối 400
- * `asset_class_not_allowed` (mã thô 1353).
+ * `asset_class_not_allowed` (mã thô 1380).
  *
  * Sáu tên đầu là phân loại OriLifeTrace; bảy tên sau khớp `asset_class` ở
  * `PhoenixKey-Specs/PhoenixKey-Math.md` §17, viết thường.
@@ -175,6 +181,165 @@ export function buildAssetMintChallenge(input: AssetMintChallengeInput): Uint8Ar
   ]);
 }
 
+// ─── Cam kết on-chain ─────────────────────────────────────────────────────────
+
+/**
+ * Domain prefix riêng cho cam kết on-chain (`AssetCanonical.ASSET_COMMIT_PREFIX`).
+ * KHÁC {@link ASSET_MINT_PREFIX} — cố ý, để chữ ký challenge không tái dùng
+ * chéo được sang tiền-ảnh cam kết.
+ */
+export const ASSET_COMMIT_PREFIX = "PHOENIXKEY_ASSET_COMMIT:";
+
+/** Độ dài muối cam kết tính bằng byte (`AssetCanonical.SALT_BYTES`). */
+export const COMMITMENT_SALT_BYTES = 32;
+
+/** Độ dài muối khi mã hex thường (`AssetCanonical.SALT_HEX_LENGTH`). */
+export const COMMITMENT_SALT_HEX_LENGTH = COMMITMENT_SALT_BYTES * 2;
+
+/** Đầu vào tính/kiểm cam kết on-chain của một AssetDID. */
+export type VerifyAssetCommitmentInput = {
+  /**
+   * Muối 32 byte, hex thường, đúng 64 ký tự — MỘT muối riêng cho MỖI bản ghi
+   * (`asset_dids.commitment_salt`, hoặc trường `commitment_salt` trả về từ
+   * {@link AssetModule.checkCommitment}). Muối đi vào tiền-ảnh dưới dạng
+   * chính CHUỖI HEX của nó (như `physicalIdHash`), KHÔNG decode ngược thành
+   * 32 byte thô trước — `AssetCanonical.commitment` truyền thẳng `String salt`
+   * cho `CanonicalMessage.build`, hàm đó tự UTF-8 hoá field string.
+   */
+  salt: string;
+  /** SHA-256 đặc trưng vật lý — phải khớp giá trị đã dùng lúc đúc. */
+  physicalIdHash: string;
+  /** Phân loại — phải khớp giá trị đã dùng lúc đúc. */
+  assetClass: string;
+  /**
+   * Băm vùng GPS — phải khớp giá trị đã dùng lúc đúc. Cùng quy ước vắng/rỗng
+   * như {@link AssetMintChallengeInput.locationProof}: `null`/`undefined` vắng,
+   * `""` và `"null"` là hai giá trị CÓ MẶT khác nhau.
+   */
+  locationProof?: string | null;
+  /** Cam kết đọc từ tài liệu genesis trên chuỗi (`onChainCommitment` / `on_chain_commitment`) — 64 ký tự hex. */
+  commitment: string;
+};
+
+function assertValidSalt(salt: string): void {
+  if (typeof salt !== "string" || salt.length !== COMMITMENT_SALT_HEX_LENGTH) {
+    throw new Error(
+      `salt phải là chuỗi hex ${COMMITMENT_SALT_HEX_LENGTH} ký tự (${COMMITMENT_SALT_BYTES} byte) — ` +
+        `nhận ${JSON.stringify(salt)} (${typeof salt === "string" ? salt.length : 0} ký tự). ` +
+        `Muối rỗng/thiếu KHÔNG kiểm được — không được coi đó là "khớp".`,
+    );
+  }
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+/**
+ * Tính lại cam kết on-chain từ dữ liệu gốc + muối — bản TypeScript của
+ * `AssetCanonical.commitment(salt, physicalIdHash, assetClass, locationProof)`.
+ *
+ * `sha256(CanonicalMessage(` {@link ASSET_COMMIT_PREFIX} `, salt, physicalIdHash,
+ * assetClass, cờ-locationProof, locationProof))`, trả hex thường 64 ký tự.
+ *
+ * Field cam kết CHỈ có 5 phần tử (salt, physicalIdHash, assetClass, cờ,
+ * locationProof) — KHÔNG có `ownerDid`/`nonce` như challenge đúc; đây là hai
+ * tiền-ảnh khác nhau cho hai mục đích khác nhau (ký vs. cam kết).
+ *
+ * @throws Error nếu `salt` rỗng/thiếu hoặc sai độ dài — không tính được tiền-ảnh
+ *   thì không được phép giả vờ tính ra một cam kết nào đó.
+ */
+export function computeAssetCommitment(
+  input: Omit<VerifyAssetCommitmentInput, "commitment">,
+): string {
+  assertValidSalt(input.salt);
+
+  const lp = input.locationProof;
+  const absent = lp == null;
+  const preimage = canonicalMessage(ASSET_COMMIT_PREFIX, [
+    input.salt,
+    input.physicalIdHash,
+    input.assetClass,
+    absent ? LOCATION_ABSENT : LOCATION_PRESENT,
+    absent ? "" : lp,
+  ]);
+  return bytesToHex(sha256(preimage));
+}
+
+/**
+ * Kiểm cam kết on-chain của một AssetDID — thuần client, KHÔNG gọi mạng.
+ *
+ * Tính lại cam kết từ `{salt, physicalIdHash, assetClass, locationProof}` rồi
+ * so với `commitment` (giá trị đọc từ chuỗi, vd `on_chain_commitment` của
+ * {@link AssetModule.checkCommitment}). So sánh không phân biệt hoa/thường —
+ * `commitment` do bên gọi cấp có thể đến từ nguồn viết hex khác casing.
+ *
+ * **Muối rỗng/thiếu ném lỗi, KHÔNG trả `true`.** Không có muối hợp lệ thì
+ * không dựng lại được tiền-ảnh — im lặng trả `true` ở đây tương đương xác nhận
+ * một tài sản mà thực ra chưa hề kiểm.
+ *
+ * @throws Error nếu `salt` rỗng/thiếu hoặc sai độ dài (xem {@link computeAssetCommitment}).
+ */
+export function verifyAssetCommitment(input: VerifyAssetCommitmentInput): boolean {
+  const recomputed = computeAssetCommitment(input);
+  if (typeof input.commitment !== "string" || input.commitment.length === 0) {
+    throw new Error("commitment rỗng/thiếu — không có gì để so sánh");
+  }
+  return recomputed === input.commitment.toLowerCase();
+}
+
+// ─── Commitment-check (GET) ───────────────────────────────────────────────────
+
+/**
+ * Sáu trạng thái của `GET /identity/{did}/commitment-check`
+ * (`CommitmentCheckStatus.java`). "Khớp/không khớp" là cách chia nói dối —
+ * một hàng KHÔNG kiểm được không phải là hàng đã bị sửa, cũng không phải hàng
+ * lành; map đủ cả sáu, đừng gộp.
+ */
+export const COMMITMENT_CHECK_STATUSES = [
+  /** Cam kết on-chain khớp cam kết tính lại từ Postgres — hàng chưa bị sửa. */
+  "MATCH",
+  /** LỆCH — hàng Postgres KHÔNG còn là hàng đã neo tại giao dịch genesis. */
+  "MISMATCH",
+  /** Tài liệu genesis trên chuỗi không có trường cam kết (đúc trước khi có cam kết) — không kiểm được, mãi mãi. */
+  "NO_COMMITMENT_LEGACY",
+  /** Trên chuỗi CÓ cam kết nhưng hàng Postgres thiếu muối ⇒ không dựng lại được tiền-ảnh. Phải RỖNG trong sản xuất. */
+  "NO_SALT_UNVERIFIABLE",
+  /** AssetDID có trong Postgres nhưng chưa neo xong lên chuỗi (`genesis_tx_hash` null) — chưa có gì để đối chiếu. */
+  "NOT_ANCHORED",
+  /** DID tồn tại nhưng không phải AssetDID — không có cam kết. */
+  "NOT_AN_ASSET",
+] as const;
+
+/** Một giá trị thuộc {@link COMMITMENT_CHECK_STATUSES}. */
+export type CommitmentCheckStatus = (typeof COMMITMENT_CHECK_STATUSES)[number];
+
+/**
+ * Kết quả `GET /identity/{did}/commitment-check`.
+ *
+ * KHÔNG trả `physicalIdHash`/`locationProof` thô (`@JsonInclude(NON_NULL)` bên
+ * Java) — bên tra cứu chính đáng đã cầm sẵn ba trường gốc (họ cầm quả trên
+ * tay); bên chỉ tò mò không được cấp thêm gì. `commitment_salt` trả kèm để
+ * bên ngoài tự băm lại bằng {@link computeAssetCommitment}/{@link verifyAssetCommitment}
+ * — không phải tin máy chủ.
+ */
+export type CommitmentCheckResponse = {
+  did: string;
+  status: CommitmentCheckStatus;
+  /** Cam kết đọc từ tài liệu genesis trên Cardano; `null` khi chưa neo hoặc tài liệu không có trường này. */
+  on_chain_commitment: string | null;
+  /** Cam kết tính lại từ hàng Postgres + muối; `null` khi thiếu muối nên không tính được. */
+  recomputed_commitment: string | null;
+  /** Muối 32 byte hex thường của bản ghi; `null` với hàng đúc trước khi có cam kết. */
+  commitment_salt: string | null;
+  /** Phân loại tài sản — công khai. */
+  asset_class: string | null;
+  /** Giao dịch neo tài liệu genesis; `null` khi chưa neo. */
+  genesis_tx_hash: string | null;
+};
+
 // ─── Request / response ───────────────────────────────────────────────────────
 
 /**
@@ -218,17 +383,27 @@ export type AssetCreateResponse = {
  * `VAULT_ALREADY_EXISTS` (luồng activation vault). Nợ có sẵn trên `main`, chưa
  * gỡ được vì đổi số là phá hợp đồng với client đang chạy.
  *
- * Hai số của luồng asset thì đã gỡ xong: `ASSET_CLASS_NOT_ALLOWED` 1351 → **1353**
- * và `OWNER_KEY_NOT_FOUND` 1352 → **1354**, nhường 1351/1352 lại cho
- * `VAULT_NOT_FOUND`/`POT_UNAVAILABLE`. Bảng dưới đây theo số MỚI.
+ * ⚠ **ĐÍNH CHÍNH:** bản trước của bảng này dùng **1353/1354** cho
+ * `ASSET_CLASS_NOT_ALLOWED`/`OWNER_KEY_NOT_FOUND` — SAI. `1353-1355` là ba số
+ * đã từng ship (`NOT_IN_PHASE2` / `CLAIM_AMOUNT_EXCEEDS_VESTED` /
+ * `ALREADY_IN_PHASE2`) rồi bị bỏ theo Wakeme v5 (Issue #67), và được giữ
+ * TRỐNG có chủ ý để không đụng client cũ còn cầm mã lỗi in-flight
+ * (`ErrorCode.java` dòng 175-179 + dòng 204-211). Dùng lại chúng là gọi tên
+ * sai đúng lớp lỗi vừa vá.
+ *
+ * `1340-1349` (khối `134x`) đã đầy, nên hai mã của luồng asset nằm ở khối MỞ
+ * RỘNG `138x`: `ASSET_CLASS_NOT_ALLOWED` = **1380**, `OWNER_KEY_NOT_FOUND` =
+ * **1381** (`ErrorCode.java` dòng 220, 231). `1351`/`1352` không phải của luồng
+ * asset — chúng thuộc `VAULT_NOT_FOUND`/`POT_UNAVAILABLE` (luồng Activation
+ * Vault) và đã bị loại khỏi bảng dưới, có test riêng khẳng định không nhận.
  */
 export const ASSET_ERROR_CODES: Record<number, string> = {
   1340: "owner_did_not_found",
   1341: "owner_signature_invalid",
   1342: "physical_id_already_claimed",
   1346: "owner_cannot_own_asset",
-  1353: "asset_class_not_allowed",
-  1354: "owner_key_not_found",
+  1380: "asset_class_not_allowed",
+  1381: "owner_key_not_found",
 };
 
 /**
@@ -322,5 +497,39 @@ export class AssetModule {
     } catch (err) {
       throw refineAssetError(err);
     }
+  }
+
+  /**
+   * Đối chiếu cam kết on-chain của một AssetDID — `GET /identity/{did}/commitment-check`.
+   *
+   * **Đòi Bearer, không whitelist.** `/identity/{did}/commitment-check` KHÔNG
+   * nằm trong `PUBLIC_GET` của `AuthRequiredInterceptor` — "mặc định đóng, mở
+   * từng đường" — nên thiếu để mã bay mãi mãi trên chuỗi. Muối là lớp bảo vệ
+   * riêng tư của vị trí vườn (`locationProof`); phát muối công khai vô hiệu
+   * hoá đúng lớp bảo vệ đó, nên endpoint đòi phiên đăng nhập dù chấp nhận BẤT
+   * KỲ session nào (không khoá theo chủ sở hữu tài sản).
+   *
+   * Cùng khuôn với {@link createAsset}: thiếu token thì ném **tại client**,
+   * không gửi lên mạng để nhận 401.
+   *
+   * Trả về nguyên `commitment_salt` + `on_chain_commitment` từ server — người
+   * gọi tự đối chiếu bằng {@link verifyAssetCommitment} nếu muốn KHÔNG tin vào
+   * `status` do server kết luận sẵn.
+   *
+   * @throws PhoenixKeyError mã chung của fetcher (`timeout`, `network_error`,
+   *   `http_<status>`, hoặc mã toàn cục vd `user_did_not_found` cho DID lạ —
+   *   bảng {@link ASSET_ERROR_CODES} không áp cho endpoint này).
+   */
+  async checkCommitment(did: string): Promise<CommitmentCheckResponse> {
+    const token = this._getSessionToken();
+    if (!token) throw new Error("No session token — user must login first");
+
+    return this.fetch<CommitmentCheckResponse>(
+      `/identity/${encodeURIComponent(did)}/commitment-check`,
+      {
+        method: "GET",
+        bearerToken: token,
+      } as FetchOptions,
+    );
   }
 }
