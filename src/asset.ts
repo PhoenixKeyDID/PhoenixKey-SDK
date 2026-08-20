@@ -32,7 +32,7 @@ export const LOCATION_PROOF_MAX_LENGTH = 120;
 /**
  * Tập `assetClass` ĐÓNG — chép nguyên từ
  * `AssetCanonical.ALLOWED_ASSET_CLASSES`. Ngoài tập ⇒ backend từ chối 400
- * `asset_class_not_allowed` (mã thô 1351).
+ * `asset_class_not_allowed` (mã thô 1353).
  *
  * Sáu tên đầu là phân loại OriLifeTrace; bảy tên sau khớp `asset_class` ở
  * `PhoenixKey-Specs/PhoenixKey-Math.md` §17, viết thường.
@@ -208,20 +208,27 @@ export type AssetCreateResponse = {
 /**
  * Mã lỗi thô → mã chuỗi, **chỉ trong phạm vi `/identity/asset/create`**.
  *
- * Cố ý KHÔNG nhập vào `ERROR_CODE_MAP` toàn cục ở `fetcher.ts`: bên backend
- * `ErrorCode.java` dùng lại số 1351 và 1352 cho hai nghĩa khác nhau —
- * `ASSET_CLASS_NOT_ALLOWED`/`OWNER_KEY_NOT_FOUND` ở luồng asset, nhưng
- * `VAULT_NOT_FOUND`/`POT_UNAVAILABLE` ở luồng activation. Một bảng toàn cục
- * khoá theo số nguyên sẽ dịch sai một trong hai luồng, nên bảng này gắn với
- * đúng endpoint sinh ra nó.
+ * Cố ý KHÔNG nhập vào `ERROR_CODE_MAP` toàn cục ở `fetcher.ts`, và điều kiện để
+ * nhập là rõ ràng: **cho tới khi `ErrorCode.java` không còn số nào trùng.**
+ * Một bảng toàn cục khoá theo số nguyên chỉ đúng khi số → nghĩa là ánh xạ một-
+ * một; hễ còn một số mang hai nghĩa thì bảng ấy dịch sai một trong hai luồng, và
+ * dịch sai lặng lẽ — người gọi bắt `err.code` vẫn thấy một cái tên trông hợp lý.
+ *
+ * Cặp còn trùng hôm nay: **1350** = `DEPENDENCY_CHAIN_CYCLE` (luồng lineage) và
+ * `VAULT_ALREADY_EXISTS` (luồng activation vault). Nợ có sẵn trên `main`, chưa
+ * gỡ được vì đổi số là phá hợp đồng với client đang chạy.
+ *
+ * Hai số của luồng asset thì đã gỡ xong: `ASSET_CLASS_NOT_ALLOWED` 1351 → **1353**
+ * và `OWNER_KEY_NOT_FOUND` 1352 → **1354**, nhường 1351/1352 lại cho
+ * `VAULT_NOT_FOUND`/`POT_UNAVAILABLE`. Bảng dưới đây theo số MỚI.
  */
 export const ASSET_ERROR_CODES: Record<number, string> = {
   1340: "owner_did_not_found",
   1341: "owner_signature_invalid",
   1342: "physical_id_already_claimed",
   1346: "owner_cannot_own_asset",
-  1351: "asset_class_not_allowed",
-  1352: "owner_key_not_found",
+  1353: "asset_class_not_allowed",
+  1354: "owner_key_not_found",
 };
 
 /**
@@ -261,12 +268,19 @@ export class AssetModule {
   /**
    * Đúc AssetDID cho một tài sản vật lý — `POST /identity/asset/create`.
    *
-   * Quyền đúc do **`ownerSignature`** quyết định, không do session: server kiểm
-   * chữ ký bằng khoá vai OWNER đang active của `ownerDid`. Session token, nếu
-   * có trong localStorage, vẫn được gắn kèm `Authorization: Bearer` để endpoint
-   * ghi được nhật ký theo phiên và để còn dùng được nếu backend siết cổng sau
-   * này — nhưng **không bắt buộc**: gọi khi chưa đăng nhập vẫn đi tiếp, vì cổng
-   * thật nằm ở chữ ký.
+   * **Hai lớp, cần cả hai.** `ownerSignature` chứng minh *chủ sở hữu đồng ý*;
+   * `Authorization: Bearer <session-jwt>` chứng minh *phiên gọi hợp lệ*. Không
+   * cái nào thay được cái nào — chữ ký owner đi qua tay bất kỳ ai cầm được nó,
+   * nên phiên vẫn phải tự đứng ra chịu trách nhiệm cho lời gọi.
+   *
+   * Cổng Bearer nằm ở `AuthRequiredInterceptor` (mặc-định-từ-chối), không ở
+   * `SecurityConfig`: interceptor có ba danh sách miễn trừ
+   * (`PUBLIC_ANY_METHOD`/`PUBLIC_GET`/`PUBLIC_POST`), và cái gì không nằm trong
+   * đó thì bị chặn. `/identity/asset/create` không nằm trong danh sách nào ⇒
+   * bắt buộc Bearer (`AuthRequiredInterceptorTest.assetCreate_noBearer_401`).
+   *
+   * Thiếu token thì hàm này ném **ngay tại client**, không gửi lên mạng để nhận
+   * 401 — một vòng mạng không nói thêm được gì mà người gọi đã biết trước.
    *
    * First-claim-wins: mỗi `physicalIdHash` chỉ claim được một lần. Hai request
    * đồng thời cho cùng một quả ra đúng một 200 và một
@@ -277,6 +291,11 @@ export class AssetModule {
    *   chung của fetcher (`timeout`, `network_error`, `http_<status>`).
    */
   async createAsset(request: AssetCreateRequest): Promise<AssetCreateResponse> {
+    // Cổng phiên trước, tải trọng sau: endpoint mặc-định-từ-chối, thiếu Bearer
+    // là 401 chắc chắn nên không gửi đi làm gì.
+    const token = this._getSessionToken();
+    if (!token) throw new Error("No session token — user must login first");
+
     // Dựng thách thức để kiểm đầu vào ngay tại chỗ gọi: `assetClass` ngoài tập
     // và `locationProof` quá dài ném lỗi ở đây thay vì đi một vòng mạng.
     buildAssetMintChallenge(request);
@@ -294,12 +313,11 @@ export class AssetModule {
       body.location_proof = request.locationProof;
     }
 
-    const token = this._getSessionToken();
     try {
       return await this.fetch<AssetCreateResponse>("/identity/asset/create", {
         method: "POST",
         body: JSON.stringify(body),
-        ...(token ? { bearerToken: token } : {}),
+        bearerToken: token,
       } as FetchOptions);
     } catch (err) {
       throw refineAssetError(err);

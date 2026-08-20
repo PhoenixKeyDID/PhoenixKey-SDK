@@ -304,7 +304,7 @@ describe("AssetModule.createAsset — đường dây", () => {
       return okResponse(MINTED);
     });
 
-    const asset = new AssetModule(BASE, () => null);
+    const asset = new AssetModule(BASE, () => "jwt-abc");
     await expect(asset.createAsset(REQUEST)).resolves.toEqual(MINTED);
     expect(seenUrl).toBe(`${BASE}/identity/asset/create`);
     expect(seenMethod).toBe("POST");
@@ -322,16 +322,37 @@ describe("AssetModule.createAsset — đường dây", () => {
     expect(seenAuth).toBe("Bearer jwt-abc");
   });
 
-  it("KHÔNG chặn lời gọi khi chưa đăng nhập — cổng thật là ownerSignature", async () => {
-    let seenAuth: string | undefined;
-    mockFetch(async (_url, init) => {
-      seenAuth = (init.headers as Record<string, string>).Authorization;
-      return okResponse(MINTED);
-    });
+  it("thiếu session token ⇒ ném TẠI CLIENT, không chạm mạng", async () => {
+    // `/identity/asset/create` không nằm trong danh sách miễn trừ nào của
+    // `AuthRequiredInterceptor` (mặc-định-từ-chối) ⇒ thiếu Bearer là 401 chắc
+    // chắn. Gửi đi để nhận 401 không nói thêm được gì mà người gọi chưa biết.
+    const spy = mockFetch(async () => okResponse(MINTED));
 
     const asset = new AssetModule(BASE, () => null);
-    await expect(asset.createAsset(REQUEST)).resolves.toEqual(MINTED);
-    expect(seenAuth).toBeUndefined();
+    await expect(asset.createAsset(REQUEST)).rejects.toThrow(
+      "No session token — user must login first",
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("ownerSignature KHÔNG thay được Bearer — hai lớp khác nhau", async () => {
+    // Chữ ký owner chứng minh CHỦ SỞ HỮU ĐỒNG Ý; Bearer chứng minh PHIÊN GỌI
+    // HỢP LỆ. Có chữ ký đầy đủ mà không có phiên thì vẫn phải dừng.
+    const spy = mockFetch(async () => okResponse(MINTED));
+
+    const asset = new AssetModule(BASE, () => null);
+    await expect(
+      asset.createAsset({ ...REQUEST, ownerSignature: "ff".repeat(64) }),
+    ).rejects.toThrow(/No session token/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("cổng phiên chặn TRƯỚC cả khâu kiểm assetClass", async () => {
+    // Thiếu phiên thì không được đi tiếp, bất kể tải trọng đúng hay sai.
+    const asset = new AssetModule(BASE, () => null);
+    await expect(
+      asset.createAsset({ ...REQUEST, assetClass: "organic" }),
+    ).rejects.toThrow(/No session token/);
   });
 
   it("thân request đổi sang snake_case đúng tên DTO Java", async () => {
@@ -341,7 +362,7 @@ describe("AssetModule.createAsset — đường dây", () => {
       return okResponse(MINTED);
     });
 
-    const asset = new AssetModule(BASE, () => null);
+    const asset = new AssetModule(BASE, () => "jwt-abc");
     await asset.createAsset(REQUEST);
     expect(body).toEqual({
       owner_did: OWNER_DID,
@@ -360,7 +381,7 @@ describe("AssetModule.createAsset — đường dây", () => {
       return okResponse(MINTED);
     });
 
-    const asset = new AssetModule(BASE, () => null);
+    const asset = new AssetModule(BASE, () => "jwt-abc");
     await asset.createAsset({ ...REQUEST, locationProof: null });
     await asset.createAsset({ ...REQUEST, locationProof: "" });
 
@@ -370,7 +391,7 @@ describe("AssetModule.createAsset — đường dây", () => {
 
   it("chặn assetClass ngoài tập TRƯỚC khi chạm mạng", async () => {
     const spy = mockFetch(async () => okResponse(MINTED));
-    const asset = new AssetModule(BASE, () => null);
+    const asset = new AssetModule(BASE, () => "jwt-abc");
     await expect(
       asset.createAsset({ ...REQUEST, assetClass: "organic" }),
     ).rejects.toThrow(/ngoài tập cho phép/);
@@ -384,11 +405,11 @@ describe("AssetModule.createAsset — map lỗi", () => {
     [1341, 403, "owner_signature_invalid"],
     [1342, 409, "physical_id_already_claimed"],
     [1346, 400, "owner_cannot_own_asset"],
-    [1351, 400, "asset_class_not_allowed"],
-    [1352, 404, "owner_key_not_found"],
+    [1353, 400, "asset_class_not_allowed"],
+    [1354, 404, "owner_key_not_found"],
   ])("mã thô %i → code \"%s\"", async (raw, status, expected) => {
     mockFetch(async () => errorResponse(raw as number, status as number));
-    const asset = new AssetModule(BASE, () => null);
+    const asset = new AssetModule(BASE, () => "jwt-abc");
     await expect(asset.createAsset(REQUEST)).rejects.toMatchObject({
       code: expected,
       rawCode: raw,
@@ -397,20 +418,32 @@ describe("AssetModule.createAsset — map lỗi", () => {
     await expect(asset.createAsset(REQUEST)).rejects.toBeInstanceOf(PhoenixKeyError);
   });
 
+  it.each([
+    [1351, "vault_not_found bên activation"],
+    [1352, "pot_unavailable bên activation"],
+  ])("KHÔNG nhận %i làm mã asset nữa — đã nhường cho %s", async (raw) => {
+    mockFetch(async () => errorResponse(raw as number, 404));
+    const asset = new AssetModule(BASE, () => "jwt-abc");
+    await expect(asset.createAsset(REQUEST)).rejects.toMatchObject({
+      code: "http_404",
+      rawCode: raw,
+    });
+  });
+
   it("ghim bảng ASSET_ERROR_CODES bằng literal", () => {
     expect(ASSET_ERROR_CODES).toEqual({
       1340: "owner_did_not_found",
       1341: "owner_signature_invalid",
       1342: "physical_id_already_claimed",
       1346: "owner_cannot_own_asset",
-      1351: "asset_class_not_allowed",
-      1352: "owner_key_not_found",
+      1353: "asset_class_not_allowed",
+      1354: "owner_key_not_found",
     });
   });
 
   it("không ghi đè mã đã có tên từ bảng toàn cục (3006 nonce_already_used)", async () => {
     mockFetch(async () => errorResponse(3006, 409));
-    const asset = new AssetModule(BASE, () => null);
+    const asset = new AssetModule(BASE, () => "jwt-abc");
     await expect(asset.createAsset(REQUEST)).rejects.toMatchObject({
       code: "nonce_already_used",
     });
@@ -420,7 +453,7 @@ describe("AssetModule.createAsset — map lỗi", () => {
     mockFetch(async () => {
       throw new TypeError("connection refused");
     });
-    const asset = new AssetModule(BASE, () => null);
+    const asset = new AssetModule(BASE, () => "jwt-abc");
     await expect(asset.createAsset(REQUEST)).rejects.toMatchObject({
       code: "network_error",
       status: 0,
@@ -431,7 +464,7 @@ describe("AssetModule.createAsset — map lỗi", () => {
     // Non-2xx chưa có tên: fetcher đặt `http_<status>`. Bảng asset không nhận
     // 1399 nên không được phép bịa ra một cái tên cho nó.
     mockFetch(async () => errorResponse(1399, 400));
-    const asset = new AssetModule(BASE, () => null);
+    const asset = new AssetModule(BASE, () => "jwt-abc");
     await expect(asset.createAsset(REQUEST)).rejects.toMatchObject({
       code: "http_400",
       rawCode: 1399,
