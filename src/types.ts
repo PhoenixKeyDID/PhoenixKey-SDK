@@ -180,9 +180,23 @@ export type IdentityRegisterResponse = {
   tx_hash: string;
 };
 
+/**
+ * Owner key mới nhất của một DID theo `created_at` — **kể cả khi đã thu hồi**.
+ *
+ * Máy chủ cố ý trả 200 cho khoá đã thu hồi để bên tin cậy phân biệt được
+ * "khoá đã bị thu hồi" với "DID chưa từng tồn tại" (404). Nghĩa là **200
+ * KHÔNG có nghĩa là khoá dùng được** — phải đọc `status`.
+ */
 export type IdentityPubkey = {
   public_key_hex: string;
   key_role: string;
+  /** UUID của đúng khoá này — đổi khi chủ DID xoay khoá. */
+  key_id?: string | null;
+  /** `"active"` hoặc `"revoked"`. Chỉ `"active"` mới được dùng để verify. */
+  status?: string | null;
+  created_at?: string | null;
+  /** Thời điểm thu hồi; `null` khi còn hiệu lực. */
+  revoked_at?: string | null;
 };
 
 export type IdentityStatus = {
@@ -197,6 +211,17 @@ export type IdentityHealth = {
   exported_at: string | null;
   active_key_count: number;
   guardian_count: number;
+};
+
+/**
+ * Kết quả tra username → DID (GET /identity/by-username/{username}).
+ *
+ * `username` trả về là dạng đã chuẩn hoá của backend, có thể khác chuỗi đã gửi
+ * đi (hạ chữ thường, cắt khoảng trắng) — hiển thị thì dùng giá trị này.
+ */
+export type UsernameResolve = {
+  username: string;
+  user_did: string;
 };
 
 /**
