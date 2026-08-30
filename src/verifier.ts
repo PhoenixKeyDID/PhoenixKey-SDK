@@ -14,7 +14,12 @@ import { sha256 } from "@noble/hashes/sha256";
 import { SignIntent, PhoenixKeyError } from "./types";
 
 export type VerifierConfig = {
-  /** PhoenixKey API base URL. Default: "https://api.phoenixkey.me". */
+  /**
+   * PhoenixKey API base URL, including the `/api/v1` context path.
+   * Default: "https://api.phoenixkey.me/api/v1".
+   *
+   * The backend serves every route under `/api/v1`; the bare origin returns 404.
+   */
   phoenixkeyApiUrl?: string;
   /** TTL for in-memory pubkey cache, ms. Default: 5 minutes. */
   cacheTtlMs?: number;
@@ -50,7 +55,7 @@ export class PhoenixKeyVerifier {
   private readonly cacheTtl: number;
 
   constructor(config: VerifierConfig = {}) {
-    this.phoenixkeyApiUrl = (config.phoenixkeyApiUrl ?? "https://api.phoenixkey.me").replace(/\/+$/, "");
+    this.phoenixkeyApiUrl = (config.phoenixkeyApiUrl ?? "https://api.phoenixkey.me/api/v1").replace(/\/+$/, "");
     this.cacheTtl = config.cacheTtlMs ?? DEFAULT_CACHE_TTL;
   }
 
