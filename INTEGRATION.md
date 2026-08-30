@@ -208,7 +208,7 @@ Tổng cung LAMP = 3,6×10¹⁶ oildrop > `Number.MAX_SAFE_INTEGER` (9,007×10¹
 
 ## 3. Identity & Data compliance (§3)
 
-- **§3.1 DID root**: PhoenixKey DID = root danh tính; module khác KHÔNG redefine, chỉ tiêu thụ qua service API. Issuer-side EdDSA + `/.well-known/jwks.json` thuộc **Long** (Claude KHÔNG sửa PhoenixKey backend).
+- **§3.1 DID root**: PhoenixKey DID = root danh tính; module khác KHÔNG redefine, chỉ tiêu thụ qua service API. Issuer-side EdDSA + `/.well-known/jwks.json` thuộc **đội backend** (Claude KHÔNG sửa PhoenixKey backend).
 - **§3.2 INV-1**: store DID = single source of truth; mọi client (kể cả app native) ghi qua fabric API versioned + idempotency key. Client KHÔNG ghi data layer trực tiếp.
 - **§3.4 INV-3**: on-chain (TAAD anchor) CHỈ chứa **hash/commitment/pointer** — KHÔNG PII/sinh trắc raw. PII + sinh trắc off-chain, store tại VN, erasable. Consent per-host. Capability cưỡng chế qua broker.
 - **LoA (§3.1)**: chỉ DID sinh trắc gốc có quyền governance; DID liên kết host ngoài (LoA thấp) chỉ dùng tính năng.
@@ -218,7 +218,7 @@ Tổng cung LAMP = 3,6×10¹⁶ oildrop > `Number.MAX_SAFE_INTEGER` (9,007×10¹
 - Bằng chứng danh tính sinh + ký TRONG app PhoenixKey gốc (Secure Enclave) hoặc QR challenge-response. **DID gốc/sinh trắc KHÔNG BAO GIỜ vào WebView host.**
 - **Chuẩn (§5.1) đòi** token host nhận là **audience-bound + sender-constrained (DPoP), sống-ngắn**.
   Đây là mục tiêu của §5.1, **KHÔNG phải hiện trạng** — xem sửa ở mục 6 bên dưới.
-- **Issuer-side mint EdDSA + JWKS: ĐÃ XONG** (`JwksController` live trên `main` PhoenixKey-Database từ trước nhánh này — `GET /.well-known/jwks.json`, verify được qua `AppTokenVerifier` ở `src/verifier.ts`, test PASS). Dòng "blocker thuộc Long" ở bản trước ĐÃ LỖI THỜI — gỡ. **Blocker còn lại của kênh 3 là sender-constrained (DPoP)**, xem mục 6.
+- **Issuer-side mint EdDSA + JWKS: ĐÃ XONG** (`JwksController` live trên `main` PhoenixKey-Database từ trước nhánh này — `GET /.well-known/jwks.json`, verify được qua `AppTokenVerifier` ở `src/verifier.ts`, test PASS). Dòng "blocker thuộc đội backend" ở bản trước ĐÃ LỖI THỜI — gỡ. **Blocker còn lại của kênh 3 là sender-constrained (DPoP)**, xem mục 6.
 
 ## 5. Anchor on-chain đã deploy (bằng chứng — Preprod)
 
@@ -241,15 +241,15 @@ Giao dịch minh hoạ khác: Wakeme 1001 tLAMP Preview `01139ba8af1f7556b70a821
 **Embed (kênh 3)**
 - [x] Credential/biometric KHÔNG vào WebView (DID gốc/sinh trắc chỉ sống trong Secure Enclave / app gốc).
 - [x] `app_token` (đổi qua `POST /auth/token/exchange`) audience-bound (`aud` = ServiceDID) + `nonce` (nếu caller truyền) + sống-ngắn (15 phút mặc định) — verify được qua JWKS (Ed25519, `GET /.well-known/jwks.json`), xem `AppTokenVerifier` ở `src/verifier.ts`.
-- [x] Issuer-side JWKS EdDSA — **đã xong** (xem trên; bản trước ghi đây là blocker "thuộc Long", nay đã lỗi thời — gỡ).
+- [x] Issuer-side JWKS EdDSA — **đã xong** (xem trên; bản trước ghi đây là blocker của đội backend, nay đã lỗi thời — gỡ).
 - [ ] **sender-constrained (DPoP) — CHƯA có.** `app_token` hiện là Bearer thuần ký EdDSA — bên nào cầm được chuỗi token dùng được nguyên vẹn tới `exp`, không có cơ chế ràng nó vào một khoá phía client như DPoP đòi. Dòng checklist này từng bị đánh dấu "[x]" (ghi nhầm là đã có DPoP) — sửa lại ở PR này cho khớp mã. Cần track riêng nếu §5.1 bắt buộc DPoP trước khi mở kênh 3 rộng rãi cho integrator ngoài.
 
-**Frontend** — N/A cho silent (không có màn feature; UI do module feature tiêu thụ capability, thuộc SuperApp/Long).
+**Frontend** — N/A cho silent (không có màn feature; UI do module feature tiêu thụ capability, thuộc đội SuperApp / đội backend).
 
 **Verify (bằng chứng thật)**
 - [x] Mobile: `flutter analyze + test` xanh (ví 44/44, pool 41/41, staking 17, dApp 38, cargo 141-154 tuỳ nhánh) — PR Core #28-33.
 - [x] On-chain: deploy 2 validator Preprod verify qua Blockfrost (tx `b22bc207…`).
-- [ ] Backend `curl` endpoint thật — thuộc Long (PhoenixKey-Database).
+- [ ] Backend `curl` endpoint thật — thuộc đội backend (PhoenixKey-Database).
 
 **Registry & Governance** — [ ] chờ Registry permissionless + DAO hậu kiểm (§6).
 
