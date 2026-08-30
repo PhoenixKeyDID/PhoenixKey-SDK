@@ -151,6 +151,35 @@ if (r.valid) {
 }
 ```
 
+### Revoked keys are rejected (v0.4.0+)
+
+`GET /identity/{did}/pubkey` answers **200 for a revoked owner key too** — that is
+deliberate, so a relying party can tell "this key was revoked" apart from "this DID
+never existed" (404). **A 200 therefore does not mean the key is usable.**
+
+The verifier reads `status` and refuses anything that is not `"active"`, so a
+mathematically valid signature made with a key the user has already revoked comes
+back as:
+
+```ts
+{ valid: false, user_did, reason: "key_revoked: 2026-08-01T00:00:00Z" }
+```
+
+Two things follow for integrators:
+
+- If you call `verifier.resolvePubkey(did)` yourself, it now **throws**
+  `PhoenixKeyError { code: "key_revoked" }` instead of handing back the hex of a
+  revoked key. Use `verifier.resolveKey(did)` when you want the raw record —
+  `{ public_key_hex, key_role, key_id, status, created_at, revoked_at }` — and want
+  to decide for yourself.
+- Resolved keys are cached for 5 minutes by default. That cache is also the window
+  in which a key revoked *just after* it was cached still verifies. Shorten it with
+  `new PhoenixKeyVerifier({ cacheTtlMs: 30_000 })`, or pass `0` to disable caching
+  and pay one network call per verification.
+
+If you built your own verification path instead of using this SDK, check that it
+reads `status` — reading only `public_key_hex` accepts revoked keys.
+
 ---
 
 ## Step 5 — Wallet & MAGIC accrual (v0.3.0+)
