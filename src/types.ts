@@ -220,6 +220,78 @@ export type W3CDIDDocument = {
   updated?: string | null;
 };
 
+// ─── Device / Key Role (multi-device sessions) ─────────────────────────────────
+
+/**
+ * Vai của một khoá thiết bị đã lập phiên — ánh xạ 1-1 với backend
+ * `KeyRole` (owner | manager | viewer), thứ bậc `viewer < manager < owner`.
+ *
+ * Nay được mang trong `app_token` (claim `key_role`, xem {@link keyRoleFromClaim}
+ * + verifier `verifyAppToken` ở `./verifier`) và trong mỗi
+ * {@link DeviceView.key_role} trả về từ `GET /keys/devices`.
+ */
+export type KeyRole = "viewer" | "manager" | "owner";
+
+const KEY_ROLE_RANK: Record<KeyRole, number> = { viewer: 0, manager: 1, owner: 2 };
+
+/**
+ * Đọc vai từ một claim/giá trị thô — **fail-safe**, khớp đúng backend
+ * `KeyRole.fromClaim(String)`: `null`/rỗng/chuỗi lạ → `"viewer"`. Không bao
+ * giờ ném, không bao giờ trả `"owner"` cho đầu vào không nằm trong ba giá trị
+ * hợp lệ (so khớp không phân biệt hoa/thường, có trim khoảng trắng).
+ *
+ * Dùng hàm này bất cứ khi nào đọc `key_role` — từ `app_token` đã verify chữ
+ * ký, hoặc từ `DeviceView.key_role` — thay vì so sánh chuỗi tay: một phiên cũ
+ * (đúc trước khi backend có claim vai) sẽ mang `key_role` rỗng/thiếu, và
+ * fail-safe ở đây đảm bảo nó tuột về quyền THẤP NHẤT, không phải quyền chủ.
+ *
+ * @example
+ * ```ts
+ * const role = keyRoleFromClaim(claims.key_role);
+ * if (!keyRoleAtLeast(role, "manager")) {
+ *   throw new Error("This device session cannot sign transactions");
+ * }
+ * ```
+ */
+export function keyRoleFromClaim(raw: string | null | undefined): KeyRole {
+  if (typeof raw !== "string") return "viewer";
+  const v = raw.trim().toLowerCase();
+  if (v === "owner" || v === "manager" || v === "viewer") return v;
+  return "viewer";
+}
+
+/**
+ * So thứ bậc: `role` có đạt tối thiểu `min` không (`viewer < manager < owner`)?
+ * Dùng để gác quyền bằng một dòng, vd `keyRoleAtLeast(role, "manager")`.
+ */
+export function keyRoleAtLeast(role: KeyRole, min: KeyRole): boolean {
+  return KEY_ROLE_RANK[role] >= KEY_ROLE_RANK[min];
+}
+
+/**
+ * Một thiết bị/khoá của chính chủ DID, như trả về từ `GET /keys/devices`.
+ *
+ * `key_role` là giá trị THÔ từ backend — luôn đọc qua {@link keyRoleFromClaim}
+ * thay vì so sánh chuỗi trực tiếp, cùng lý do fail-safe ở trên.
+ * `device_name` là `null` nếu người dùng chưa từng đặt tên.
+ * `current` đánh dấu đúng thiết bị đang gọi request (so khớp `key_id` claim
+ * trong session token đang dùng) — không tự thu hồi nhầm máy đang dùng.
+ */
+export type DeviceView = {
+  key_id: string;
+  device_name: string | null;
+  key_role: string;
+  status: "active" | "revoked";
+  created_at: string;
+  last_used_at: string | null;
+  current: boolean;
+};
+
+/** Returned by GET /keys/devices. `devices` rỗng — không bao giờ null. */
+export type DeviceListResponse = {
+  devices: DeviceView[];
+};
+
 // ─── Activity Logs ────────────────────────────────────────────────────────────
 
 export type ActivityLogItem = {

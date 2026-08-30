@@ -212,6 +212,77 @@ Both modules accept the same `_getSessionToken` getter the rest of the SDK uses
 
 ---
 
+## Step 7 — One person, many devices (owner / manager / viewer)
+
+A PhoenixKey user can be logged in on several devices at once (their phone as
+`owner`, a second phone or a browser session as `manager`, a read-only client
+as `viewer`). If your app receives an `app_token` — via
+`POST /auth/token/exchange`, for a `ServiceDID` you own — there are three
+things you need to know before you trust it.
+
+**1. `app_token` carries `key_role` — you must gate on it yourself.**
+Don't assume every session is a full-power owner session. Verify the token's
+signature first (never read a JWT payload without verifying it — that's how
+a forged token gets treated as real), then check the role before allowing a
+sensitive action:
+
+```ts
+import { AppTokenVerifier } from "@phoenixkeydid/phoenixkey-sdk/verifier";
+import { keyRoleAtLeast } from "@phoenixkeydid/phoenixkey-sdk";
+
+const verifier = new AppTokenVerifier();
+
+app.post("/orilife/transfer", async (req, res) => {
+  const claims = await verifier.verify(req.headers.authorization?.slice(7) ?? "", "did:phoenix:svc:orilife");
+
+  if (!keyRoleAtLeast(claims.key_role, "manager")) {
+    return res.status(403).json({ error: "This device session cannot sign transactions" });
+  }
+
+  // claims.sub is the user's DID, claims.key_id identifies the device key
+  await processTransfer(claims.sub, req.body);
+  res.json({ ok: true });
+});
+```
+
+**2. `key_role: "viewer"` from an old session means "role unknown", not "restricted on purpose".**
+Sessions minted before PhoenixKey added role claims — or a token whose
+`key_role` claim is missing/garbled — come back as `"viewer"` (the SDK's
+`keyRoleFromClaim()` fail-safe never guesses `"owner"` for unclear input).
+Don't treat every `"viewer"` as a suspicious or malicious client — it resolves
+itself the next time that user logs in fresh. If your app has actions that a
+genuine `viewer` role should never be blocked from (read-only stuff), keep
+those open regardless of this ambiguity.
+
+**3. A revoked device's `app_token` still works until it expires.**
+Revoking a device key (`client.devices.revokeDevice(keyId)`, below) kills
+that device's PhoenixKey *session* on its very next call — but any
+`app_token` already minted from that session keeps verifying successfully
+until its own `exp` (currently 15 minutes) — signature verification alone
+can't know a session was revoked afterward. If your app needs near-immediate
+revocation (e.g. a compromised device), don't rely on `exp` — re-check with
+PhoenixKey (or keep your own short-lived cache of revoked `key_id`s) instead
+of trusting the token for its full lifetime.
+
+### Managing your own devices (requires an `owner` session)
+
+```ts
+const { devices } = await phoenix.devices.listDevices();
+// [{ key_id, device_name, key_role, status, created_at, last_used_at, current }, ...]
+
+await phoenix.devices.renameDevice(someKeyId, "Laptop văn phòng");
+
+await phoenix.devices.revokeDevice(someOldKeyId);
+// throws PhoenixKeyError({ code: "last_owner_key" }) if it's your last active owner key —
+// go through account recovery instead of revoking your only way in.
+```
+
+A `manager`/`viewer` session calling any of these three gets
+`PhoenixKeyError({ code: "key_role_forbidden" })` — device management is
+owner-only, by backend design, not something the SDK can loosen.
+
+---
+
 ## Errors
 
 All SDK methods throw `PhoenixKeyError`:
@@ -223,7 +294,8 @@ try {
   await phoenix.auth.initSession();
 } catch (err) {
   if (err instanceof PhoenixKeyError) {
-    // err.code:    "session_expired" | "signature_invalid" | "nonce_already_used" | ...
+    // err.code:    "session_expired" | "signature_invalid" | "nonce_already_used" |
+    //              "key_role_forbidden" | "last_owner_key" | "device_name_invalid" | ...
     // err.status:  HTTP status
     // err.userMessageKey: i18n key — "errors.unauthorized", etc.
   }
@@ -236,6 +308,6 @@ try {
 
 - Spec: [PhoenixKey_Interface.md v1.4.3](https://github.com/AladinContract/PhoenixKey-Database/blob/main/docs/PhoenixKey_Interface.md)
 - Live API: `https://api.phoenixkey.me/api/v1/swagger-ui.html`
-- Tokens — `temp_token` 5 min (login SSE), `session_token` 24 h (auth header), `linked_device_token` 30 days (skip QR).
+- Tokens — `temp_token` 5 min (login SSE), `session_token` 24 h (auth header), `linked_device_token` 30 days (skip QR), `app_token` 15 min (per-`ServiceDID` SSO via `POST /auth/token/exchange` — verify with `AppTokenVerifier`, see Step 7).
 
 License: MIT.

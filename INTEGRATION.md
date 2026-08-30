@@ -3,7 +3,7 @@
 > **Là gì**: Khai báo tích hợp của platform **PhoenixKey** — tuân thủ **MagicLamp Platform Integration Standard** (L1 Ecosystem Standard, `SuperApp/Specs/INTEGRATION-STANDARD.md`, v0.1). File này KHÔNG định nghĩa lại chuẩn; nó là bản CONFORMANCE của PhoenixKey theo chuẩn đó.
 > **Kiểu tích hợp**: `silent` (§1.3) — PhoenixKey không chiếm UI; cung service API + capability cho module khác. KHÔNG khai `entrypoint`/`route`/`icon`/`navSlot`.
 > **Vai trò đặc biệt**: PhoenixKey DID là **root danh tính toàn hệ** (§3.1) — mọi module tiêu thụ danh tính qua service API của PhoenixKey.
-> **Owner**: Aladin (founder) · Phoenix agent giữ interface contract. **Cập nhật**: 2026-07-21.
+> **Owner**: Aladin (founder) · Phoenix agent giữ interface contract. **Cập nhật**: 2026-08-30 (mục 4+6 — gỡ blocker JWKS đã lỗi thời, sửa checkbox DPoP ghi sai so với mã `app_token` hiện tại).
 > **Nhà canonical**: file này ở **PhoenixKey-SDK** (repo công khai, versioned) — nơi mọi integrator bên ngoài + SuperApp fetch. Bản ở root `PhoenixKeyDID/PhoenixKey-Integration.md` chỉ là con trỏ cho người đọc.
 
 ---
@@ -88,8 +88,9 @@ Bảng cho integrator (SuperApp) biết **build được vào cái gì NGAY**. C
 ## 4. Embed / kênh 3 (§5) — federation danh tính
 
 - Bằng chứng danh tính sinh + ký TRONG app PhoenixKey gốc (Secure Enclave) hoặc QR challenge-response. **DID gốc/sinh trắc KHÔNG BAO GIỜ vào WebView host.**
-- Host chỉ nhận token **audience-bound (host-id+module-id+device+nonce) + sender-constrained (DPoP), sống-ngắn**.
-- **Blocker cho kênh 3**: issuer-side mint EdDSA + JWKS — thuộc Long. Consumer-side (ProofChat) đã verify.
+- **Chuẩn (§5.1) đòi** token host nhận là **audience-bound + sender-constrained (DPoP), sống-ngắn**.
+  Đây là mục tiêu của §5.1, **KHÔNG phải hiện trạng** — xem sửa ở mục 6 bên dưới.
+- **Issuer-side mint EdDSA + JWKS: ĐÃ XONG** (`JwksController` live trên `main` PhoenixKey-Database từ trước nhánh này — `GET /.well-known/jwks.json`, verify được qua `AppTokenVerifier` ở `src/verifier.ts`, test PASS). Dòng "blocker thuộc Long" ở bản trước ĐÃ LỖI THỜI — gỡ. **Blocker còn lại của kênh 3 là sender-constrained (DPoP)**, xem mục 6.
 
 ## 5. Anchor on-chain đã deploy (bằng chứng — Preprod)
 
@@ -110,8 +111,10 @@ Giao dịch minh hoạ khác: Wakeme 1001 tLAMP Preview `01139ba8af1f7556b70a821
 - [x] Ghi data qua fabric API + idempotency (INV-1). On-chain chỉ hash/commitment (TAAD anchor) (INV-3). Consent per-host + broker default-deny.
 
 **Embed (kênh 3)**
-- [x] Token audience-bound + DPoP + nonce; credential/biometric KHÔNG vào WebView.
-- [ ] Issuer-side JWKS EdDSA — **BLOCKER, thuộc Long**.
+- [x] Credential/biometric KHÔNG vào WebView (DID gốc/sinh trắc chỉ sống trong Secure Enclave / app gốc).
+- [x] `app_token` (đổi qua `POST /auth/token/exchange`) audience-bound (`aud` = ServiceDID) + `nonce` (nếu caller truyền) + sống-ngắn (15 phút mặc định) — verify được qua JWKS (Ed25519, `GET /.well-known/jwks.json`), xem `AppTokenVerifier` ở `src/verifier.ts`.
+- [x] Issuer-side JWKS EdDSA — **đã xong** (xem trên; bản trước ghi đây là blocker "thuộc Long", nay đã lỗi thời — gỡ).
+- [ ] **sender-constrained (DPoP) — CHƯA có.** `app_token` hiện là Bearer thuần ký EdDSA — bên nào cầm được chuỗi token dùng được nguyên vẹn tới `exp`, không có cơ chế ràng nó vào một khoá phía client như DPoP đòi. Dòng checklist này từng bị đánh dấu "[x]" (ghi nhầm là đã có DPoP) — sửa lại ở PR này cho khớp mã. Cần track riêng nếu §5.1 bắt buộc DPoP trước khi mở kênh 3 rộng rãi cho integrator ngoài.
 
 **Frontend** — N/A cho silent (không có màn feature; UI do module feature tiêu thụ capability, thuộc SuperApp/Long).
 
