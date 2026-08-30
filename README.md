@@ -172,10 +172,15 @@ Two things follow for integrators:
   revoked key. Use `verifier.resolveKey(did)` when you want the raw record —
   `{ public_key_hex, key_role, key_id, status, created_at, revoked_at }` — and want
   to decide for yourself.
-- Resolved keys are cached for 5 minutes by default. That cache is also the window
-  in which a key revoked *just after* it was cached still verifies. Shorten it with
-  `new PhoenixKeyVerifier({ cacheTtlMs: 30_000 })`, or pass `0` to disable caching
-  and pay one network call per verification.
+- **Resolved keys are not cached by default** (`cacheTtlMs: 0`). A cached entry was
+  fetched while the key was still active, so it carries `status: "active"` and passes
+  the revocation gate — meaning any TTL above zero is a window in which a key the
+  user has already rotated away still verifies. That window falls exactly on the
+  event it matters for, because people rotate keys *after* a compromise.
+  Turn caching on knowingly if the extra `GET /identity/{did}/pubkey` per
+  verification is measurably too expensive:
+  `new PhoenixKeyVerifier({ cacheTtlMs: 30_000 })` — and size the number against
+  how long you are willing to accept a stolen key after its owner replaced it.
 
 If you built your own verification path instead of using this SDK, check that it
 reads `status` — reading only `public_key_hex` accepts revoked keys.

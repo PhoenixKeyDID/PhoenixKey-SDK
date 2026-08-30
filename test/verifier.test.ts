@@ -115,3 +115,53 @@ describe("PhoenixKeyVerifier — resolvePubkey / resolveKey", () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("PhoenixKeyVerifier — cửa sổ đệm sau khi xoay khoá (Issue #11)", () => {
+  /**
+   * Cổng thu hồi chỉ chặn được thứ MÁY CHỦ nói là đã thu hồi. Một mục đệm thì
+   * được nạp lúc khoá còn sống, nên nó mang `status: "active"` và đi lọt cổng.
+   * Vì thế mọi TTL > 0 đều là một cửa sổ mà khoá người dùng ĐÃ XOAY vẫn verify
+   * được — và cửa sổ đó nằm đúng vào lúc nguy hiểm nhất, vì người ta xoay khoá
+   * SAU khi bị lộ.
+   */
+  function twoKeyServer(firstPubHex: string, secondPubHex: string) {
+    let call = 0;
+    return jest.spyOn(globalThis, "fetch").mockImplementation((async () => {
+      call += 1;
+      const result =
+        call === 1
+          ? { public_key_hex: firstPubHex, key_role: "owner", status: "active", revoked_at: null }
+          : { public_key_hex: secondPubHex, key_role: "owner", status: "active", revoked_at: null };
+      return new Response(JSON.stringify({ code: 1000, message: "ok", result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch);
+  }
+
+  it("mặc định KHÔNG đệm, nên khoá cũ hết verify được ngay sau khi xoay", async () => {
+    const stolen = signedProof();
+    const replacement = signedProof();
+    twoKeyServer(stolen.pubHex, replacement.pubHex);
+
+    const v = new PhoenixKeyVerifier({ phoenixkeyApiUrl: BASE });
+
+    // Trước khi xoay: chữ ký của khoá cũ hợp lệ.
+    await expect(v.verifyAuthProof(stolen.req)).resolves.toMatchObject({ valid: true });
+
+    // Người dùng xoay khoá. Lượt tra kế tiếp thấy khoá mới, nên chữ ký cũ trượt.
+    await expect(v.verifyAuthProof(stolen.req)).resolves.toMatchObject({ valid: false });
+  });
+
+  it("đặt cacheTtlMs > 0 là cố ý mở lại cửa sổ đó — ghi lại để không ai đặt nhầm", async () => {
+    const stolen = signedProof();
+    const replacement = signedProof();
+    twoKeyServer(stolen.pubHex, replacement.pubHex);
+
+    const v = new PhoenixKeyVerifier({ phoenixkeyApiUrl: BASE, cacheTtlMs: 60_000 });
+
+    await expect(v.verifyAuthProof(stolen.req)).resolves.toMatchObject({ valid: true });
+    // Vẫn hợp lệ: mục đệm được nạp lúc khoá còn active và chưa hết hạn.
+    await expect(v.verifyAuthProof(stolen.req)).resolves.toMatchObject({ valid: true });
+  });
+});

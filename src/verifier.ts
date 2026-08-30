@@ -24,12 +24,25 @@ export type VerifierConfig = {
    */
   phoenixkeyApiUrl?: string;
   /**
-   * TTL for in-memory key cache, ms. Default: 5 minutes.
+   * TTL for in-memory key cache, ms. **Default: `0` — no caching.**
    *
-   * Đây là cửa sổ mà một khoá bị thu hồi NGAY SAU khi được nạp vào bộ nhớ đệm
-   * vẫn còn được coi là hợp lệ. Hệ nào cần thu hồi lan nhanh hơn thì đặt nhỏ
-   * lại (hoặc `0` để tắt hẳn bộ nhớ đệm), đổi lại mỗi lần verify là một lượt
-   * gọi mạng.
+   * The revocation gate rejects a key the *server* reports as revoked, but a
+   * cached entry was fetched while the key was still active, so it carries
+   * `status: "active"` and passes the gate. Any TTL above zero is therefore a
+   * window in which a key the user has already rotated away still verifies.
+   *
+   * That window sits exactly on the event it matters for: people rotate keys
+   * **after** a compromise. A default of five minutes spent that window on the
+   * victim to save the integrator a network call. The default now runs the
+   * other way — correctness first, and caching is opted into knowingly:
+   *
+   * ```ts
+   * new PhoenixKeyVerifier({ cacheTtlMs: 30_000 })  // 30s window, eyes open
+   * ```
+   *
+   * Set it only if the extra `GET /identity/{did}/pubkey` per verify is
+   * measurably too expensive, and size it against how long you are willing to
+   * accept a stolen key after its owner has already replaced it.
    */
   cacheTtlMs?: number;
   /**
@@ -70,7 +83,12 @@ export type VerifyResult = {
   envelope?: "v1" | "legacy";
 };
 
-const DEFAULT_CACHE_TTL = 5 * 60 * 1000;
+/**
+ * No cache by default — see `cacheTtlMs`. A stale entry keeps a rotated-away key
+ * verifying for the length of the TTL, and this is a verifier: the safe value is
+ * the one that costs a request, not the one that costs a compromise.
+ */
+const DEFAULT_CACHE_TTL = 0;
 const TIMESTAMP_SKEW_SEC = 60;
 
 export class PhoenixKeyVerifier {
