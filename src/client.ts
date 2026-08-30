@@ -18,6 +18,7 @@ import { PhoenixKeyConfig } from "./types";
 import { AuthModule } from "./auth";
 import { SignRequestModule } from "./signRequest";
 import { IdentityModule } from "./identity";
+import { AssetModule } from "./asset";
 import { ActivityModule } from "./activity";
 import { SeedModule } from "./seed";
 import { FeesModule } from "./fees";
@@ -34,6 +35,8 @@ export class PhoenixKeyClient {
   readonly signRequest: SignRequestModule;
   /** DID resolve, pubkey lookup, health snapshot. */
   readonly identity: IdentityModule;
+  /** Đúc AssetDID cho tài sản vật lý (farm/plot/tree/... — OriLifeTrace). */
+  readonly asset: AssetModule;
   /** Activity logs với cursor pagination (spec §10). */
   readonly activity: ActivityModule;
   /** Seed Phrase export flow (spec §9.2). */
@@ -91,6 +94,11 @@ export class PhoenixKeyClient {
     );
 
     this.identity = new IdentityModule(
+      this.config.apiBaseUrl,
+      session.getSessionToken,
+    );
+
+    this.asset = new AssetModule(
       this.config.apiBaseUrl,
       session.getSessionToken,
     );
