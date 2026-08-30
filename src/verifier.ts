@@ -106,11 +106,19 @@ export class PhoenixKeyVerifier {
       return { valid: false, user_did: req.user_did, reason: "timestamp_skew" };
     }
 
-    const v1 = await this.verifySignatureFor(req.user_did, encodeRpAuthV1(req), req.signature);
+    // Tra khoá MỘT lần rồi thử từng khuôn trên chính khoá đó. Nếu để mỗi khuôn
+    // tự tra, thì với `cacheTtlMs: 0` — cấu hình mà một hệ cần thu hồi lan ngay
+    // sẽ đặt — mỗi lượt verify thành HAI lượt gọi mạng, và không ai thấy vì
+    // kết quả vẫn đúng.
+    const resolved = await this.resolveForVerify(req.user_did);
+    if ("failure" in resolved) return resolved.failure;
+    const key = resolved.key;
+
+    const v1 = this.verifyWithKey(key, req.user_did, encodeRpAuthV1(req), req.signature);
     if (v1.valid) return { ...v1, envelope: "v1" };
     if (!this.acceptLegacyEnvelope) return v1;
 
-    const legacy = await this.verifySignatureFor(req.user_did, encodeLegacyConcat(req), req.signature);
+    const legacy = this.verifyWithKey(key, req.user_did, encodeLegacyConcat(req), req.signature);
     // Trả lý do của v1 khi cả hai đều trượt — v1 là khuôn đúng, lý do của nó mới
     // là thứ người tích hợp cần đọc.
     return legacy.valid ? { ...legacy, envelope: "legacy" } : v1;
@@ -128,8 +136,9 @@ export class PhoenixKeyVerifier {
     if (Math.abs(now - req.intent.timestamp) > TIMESTAMP_SKEW_SEC) {
       return { valid: false, user_did: req.user_did, reason: "timestamp_skew" };
     }
-    const messageBytes = canonicalJsonBytes(req.intent);
-    return this.verifySignatureFor(req.user_did, messageBytes, req.signature);
+    const resolved = await this.resolveForVerify(req.user_did);
+    if ("failure" in resolved) return resolved.failure;
+    return this.verifyWithKey(resolved.key, req.user_did, canonicalJsonBytes(req.intent), req.signature);
   }
 
   /**
@@ -164,31 +173,48 @@ export class PhoenixKeyVerifier {
     return key.public_key_hex;
   }
 
-  private async verifySignatureFor(
+  /**
+   * Tra khoá và chạy cổng thu hồi. Trả về khoá dùng được, hoặc lý do trượt.
+   *
+   * Tách khỏi phần kiểm chữ ký để người gọi thử được NHIỀU khuôn ký trên cùng
+   * một lượt tra, thay vì tra lại mỗi khuôn.
+   */
+  private async resolveForVerify(
     userDid: string,
-    messageBytes: Uint8Array,
-    signatureHex: string,
-  ): Promise<VerifyResult> {
+  ): Promise<{ key: IdentityPubkey } | { failure: VerifyResult }> {
     let key: IdentityPubkey;
     try {
       key = await this.resolveKey(userDid);
     } catch (e) {
       return {
-        valid: false,
-        user_did: userDid,
-        reason: `resolve_failed: ${e instanceof Error ? e.message : String(e)}`,
+        failure: {
+          valid: false,
+          user_did: userDid,
+          reason: `resolve_failed: ${e instanceof Error ? e.message : String(e)}`,
+        },
       };
     }
-
     // Khoá đã thu hồi vẫn trả 200 kèm status — không xét ở đây thì một khoá
     // bị mất vẫn ký hợp lệ được sau khi chủ DID đã thu hồi nó.
     if (!isKeyUsable(key)) {
       return {
-        valid: false,
-        user_did: userDid,
-        reason: key.revoked_at ? `key_revoked: ${key.revoked_at}` : "key_revoked",
+        failure: {
+          valid: false,
+          user_did: userDid,
+          reason: key.revoked_at ? `key_revoked: ${key.revoked_at}` : "key_revoked",
+        },
       };
     }
+    return { key };
+  }
+
+  /** Kiểm chữ ký trên một khoá ĐÃ tra và ĐÃ qua cổng thu hồi. Không gọi mạng. */
+  private verifyWithKey(
+    key: IdentityPubkey,
+    userDid: string,
+    messageBytes: Uint8Array,
+    signatureHex: string,
+  ): VerifyResult {
     const pubkeyHex = key.public_key_hex;
 
     try {
