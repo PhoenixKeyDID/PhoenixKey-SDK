@@ -10,7 +10,9 @@ import {
   IdentityPubkey,
   IdentityStatus,
   IdentityHealth,
+  UsernameResolve,
   W3CDIDDocument,
+  PhoenixKeyError,
 } from "./types";
 
 export class IdentityModule {
@@ -45,6 +47,47 @@ export class IdentityModule {
    */
   async resolveDID(userDid: string): Promise<W3CDIDDocument> {
     return this.fetch<W3CDIDDocument>(`/identity/${encodeURIComponent(userDid)}/document`);
+  }
+
+  /**
+   * Resolve username → DID. Public — không cần auth.
+   *
+   * Ném `PhoenixKeyError` code `user_not_found` khi tên chưa ai giữ. Cần phân
+   * biệt "không có" với lỗi mạng mà không phải bọc try/catch thì dùng
+   * {@link lookupUsername}.
+   *
+   * Tên được so khớp sau khi hạ chữ thường — backend chuẩn hoá bằng
+   * `Locale.ROOT`, nên không phụ thuộc locale của máy gọi.
+   */
+  async resolveByUsername(username: string): Promise<UsernameResolve> {
+    return this.fetch<UsernameResolve>(
+      `/identity/by-username/${encodeURIComponent(username)}`,
+    );
+  }
+
+  /**
+   * Như {@link resolveByUsername} nhưng trả `null` thay vì ném, khi và CHỈ khi
+   * backend nói rõ là không tìm thấy (`user_not_found`). Mọi lỗi khác — mạng
+   * hỏng, hết giờ, 5xx — vẫn ném.
+   *
+   * Tách hai đường vì "chưa ai giữ tên này" là kết quả **bình thường** khi tra
+   * một cái tên, không phải sự cố; bắt mọi lời gọi bọc try/catch thì sớm muộn
+   * có người bọc rộng tay và nuốt luôn lỗi mạng thành "không có tên".
+   *
+   * ⚠ **`null` KHÔNG có nghĩa là tên còn trống để đặt.** Bất biến "một tên ↔
+   * một DID, vĩnh viễn" chặn cả tên đã bị thả ra, mà luật đó nằm ở bảng
+   * `username_history` — endpoint này không soi bảng đó. Một cái tên đã có chủ
+   * cũ trả về `null` ở đây rồi ném `409 USERNAME_TAKEN` lúc đặt. Đừng dựng màn
+   * hình "tên này còn trống ✓" trên hàm này; endpoint kiểm-đặt-được đang chờ
+   * làm (PhoenixKey-Database issue #188).
+   */
+  async lookupUsername(username: string): Promise<UsernameResolve | null> {
+    try {
+      return await this.resolveByUsername(username);
+    } catch (err) {
+      if (err instanceof PhoenixKeyError && err.code === "user_not_found") return null;
+      throw err;
+    }
   }
 
   /**

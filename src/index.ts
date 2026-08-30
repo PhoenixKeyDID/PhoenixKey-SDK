@@ -14,6 +14,23 @@ export { AuthModule } from "./auth";
 export { SignRequestModule } from "./signRequest";
 export type { SignSseData } from "./signRequest";
 export { IdentityModule } from "./identity";
+export {
+  AssetModule,
+  ASSET_CLASSES,
+  ASSET_MINT_PREFIX,
+  ASSET_ERROR_CODES,
+  LOCATION_ABSENT,
+  LOCATION_PRESENT,
+  LOCATION_PROOF_MAX_LENGTH,
+  buildAssetMintChallenge,
+  isAllowedAssetClass,
+} from "./asset";
+export type {
+  AssetClass,
+  AssetMintChallengeInput,
+  AssetCreateRequest,
+  AssetCreateResponse,
+} from "./asset";
 export { ActivityModule } from "./activity";
 export { SeedModule } from "./seed";
 export { FeesModule } from "./fees";
@@ -22,14 +39,31 @@ export { NetworkModule } from "./network";
 export { SupportModule } from "./support";
 export { WalletModule, PREPROD_SLOT_ORIGIN_MS, MAINNET_SLOT_ORIGIN_MS, paymentKeyHashFromAddress } from "./wallet";
 export type { Balance, MagicClaimResult } from "./wallet";
-export { ActivationModule } from "./activation";
+export { WakemeModule } from "./wakeme";
+export type {
+  WakemeBuildRequest,
+  WakemeBuildResponse,
+  WakemeSubmitResponse,
+  WakemeActivityGate,
+  WakemeVaultStatus,
+  WakemeVaultMagic,
+  WakemePotStatus,
+  WakemeGenEntry,
+  WakemeMagicQuoteRequest,
+  WakemeMagicQuote,
+  WakemeMagicCheckout,
+  WakemeMagicOrderStatus,
+} from "./wakeme";
+
+// Deprecated aliases — one release only, then removed.
+export { ActivationModule } from "./wakeme";
 export type {
   ActivationSession,
   ActivationStatus,
   ActivationStatusResponse,
   ActivationEventData,
   ActivationSubmitTxResponse,
-} from "./activation";
+} from "./wakeme";
 
 // SSE primitive (advanced — for custom flows)
 export { ResilientSSE } from "./sse";
@@ -68,6 +102,7 @@ export type {
   IdentityPubkey,
   IdentityStatus,
   IdentityHealth,
+  UsernameResolve,
   W3CDIDDocument,
   // Activity
   ActivityLogItem,

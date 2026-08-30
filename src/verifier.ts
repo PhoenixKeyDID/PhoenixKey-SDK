@@ -12,9 +12,15 @@
 import { p256 } from "@noble/curves/p256";
 import { sha256 } from "@noble/hashes/sha256";
 import { SignIntent, PhoenixKeyError, IdentityPubkey } from "./types";
+import { encodeRpAuthV1, encodeLegacyConcat } from "./envelope";
 
 export type VerifierConfig = {
-  /** PhoenixKey API base URL. Default: "https://api.phoenixkey.me". */
+  /**
+   * PhoenixKey API base URL, including the `/api/v1` context path.
+   * Default: "https://api.phoenixkey.me/api/v1".
+   *
+   * The backend serves every route under `/api/v1`; the bare origin returns 404.
+   */
   phoenixkeyApiUrl?: string;
   /**
    * TTL for in-memory key cache, ms. Default: 5 minutes.
@@ -25,6 +31,15 @@ export type VerifierConfig = {
    * gọi mạng.
    */
   cacheTtlMs?: number;
+  /**
+   * Accept the legacy `${challenge}:${domain}:${timestamp}` message form in
+   * addition to the `PHOENIXKEY_RP_AUTH:v1` envelope. Default: `true` during
+   * the migration window.
+   *
+   * The legacy form is not injective — see `verifyAuthProof`. Turn this off as
+   * soon as your callers have moved.
+   */
+  acceptLegacyEnvelope?: boolean;
 };
 
 export type VerifyAuthProofRequest = {
@@ -46,6 +61,12 @@ export type VerifyResult = {
   user_did: string;
   /** Reason for failure (if !valid). */
   reason?: string;
+  /**
+   * Which message form the signature matched (auth-proof flow only).
+   * `"legacy"` means the caller has not moved to `PHOENIXKEY_RP_AUTH:v1` yet —
+   * log it so the migration is measurable.
+   */
+  envelope?: "v1" | "legacy";
 };
 
 const DEFAULT_CACHE_TTL = 5 * 60 * 1000;
@@ -55,27 +76,44 @@ export class PhoenixKeyVerifier {
   private readonly phoenixkeyApiUrl: string;
   private readonly cache = new Map<string, { key: IdentityPubkey; expiresAt: number }>();
   private readonly cacheTtl: number;
+  private readonly acceptLegacyEnvelope: boolean;
 
   constructor(config: VerifierConfig = {}) {
-    this.phoenixkeyApiUrl = (config.phoenixkeyApiUrl ?? "https://api.phoenixkey.me").replace(/\/+$/, "");
+    this.phoenixkeyApiUrl = (config.phoenixkeyApiUrl ?? "https://api.phoenixkey.me/api/v1").replace(/\/+$/, "");
     this.cacheTtl = config.cacheTtlMs ?? DEFAULT_CACHE_TTL;
+    this.acceptLegacyEnvelope = config.acceptLegacyEnvelope ?? true;
   }
 
   /**
    * Verify the auth proof returned from a PhoenixKey login flow.
    *
-   * Recomputes the message `${challenge}:${domain}:${timestamp}` and verifies
-   * the user's signature against the pubkey resolved from `user_did`.
+   * Rebuilds the signed bytes under the `PHOENIXKEY_RP_AUTH:v1` envelope
+   * (length-framed, domain-separated — see `RP-AUTH-ENVELOPE.md`) and verifies
+   * the signature against the pubkey resolved from `user_did`.
    * Also enforces ±60s timestamp skew.
+   *
+   * During the migration window this also accepts the legacy
+   * `${challenge}:${domain}:${timestamp}` form. That form is NOT injective —
+   * `{challenge:"a", domain:"b:c"}` and `{challenge:"a:b", domain:"c"}` build
+   * the same bytes, so a signature obtained for one relying party verifies at
+   * another. Set `acceptLegacyEnvelope: false` to refuse it once your callers
+   * have moved. `VerifyResult.envelope` tells you which form matched, so you
+   * can measure the migration instead of guessing.
    */
   async verifyAuthProof(req: VerifyAuthProofRequest): Promise<VerifyResult> {
     const now = Math.floor(Date.now() / 1000);
     if (Math.abs(now - req.timestamp) > TIMESTAMP_SKEW_SEC) {
       return { valid: false, user_did: req.user_did, reason: "timestamp_skew" };
     }
-    const message = `${req.challenge}:${req.domain}:${req.timestamp}`;
-    const messageBytes = new TextEncoder().encode(message);
-    return this.verifySignatureFor(req.user_did, messageBytes, req.signature);
+
+    const v1 = await this.verifySignatureFor(req.user_did, encodeRpAuthV1(req), req.signature);
+    if (v1.valid) return { ...v1, envelope: "v1" };
+    if (!this.acceptLegacyEnvelope) return v1;
+
+    const legacy = await this.verifySignatureFor(req.user_did, encodeLegacyConcat(req), req.signature);
+    // Trả lý do của v1 khi cả hai đều trượt — v1 là khuôn đúng, lý do của nó mới
+    // là thứ người tích hợp cần đọc.
+    return legacy.valid ? { ...legacy, envelope: "legacy" } : v1;
   }
 
   /**
