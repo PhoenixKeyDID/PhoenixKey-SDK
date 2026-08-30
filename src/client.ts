@@ -26,6 +26,7 @@ import { NetworkModule } from "./network";
 import { SupportModule } from "./support";
 import { WalletModule } from "./wallet";
 import { WakemeModule } from "./wakeme";
+import { DeviceModule } from "./device";
 import * as session from "./session";
 
 export class PhoenixKeyClient {
@@ -51,6 +52,8 @@ export class PhoenixKeyClient {
   readonly wallet: WalletModule;
   /** Wakeme model A — vault GetLAMP, MAGIC yield, pot, GetMAGIC (spec §115). */
   readonly wakeme: WakemeModule;
+  /** Vòng đời thiết bị tự-quản — xem/đặt tên/thu hồi (đòi phiên vai owner). */
+  readonly devices: DeviceModule;
 
   /** localStorage helpers. */
   readonly session: typeof session;
@@ -122,6 +125,7 @@ export class PhoenixKeyClient {
       this.config.sseBaseUrl,
       session.getSessionToken,
     );
+    this.devices = new DeviceModule(this.config.apiBaseUrl, session.getSessionToken);
   }
 
   /**

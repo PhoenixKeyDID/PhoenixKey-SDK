@@ -64,6 +64,7 @@ export type {
   ActivationEventData,
   ActivationSubmitTxResponse,
 } from "./wakeme";
+export { DeviceModule } from "./device";
 
 // SSE primitive (advanced — for custom flows)
 export { ResilientSSE } from "./sse";
@@ -119,10 +120,17 @@ export type {
   // Storage
   SessionMeta,
   LinkedDevice,
+  // Device / key role (multi-device sessions)
+  KeyRole,
+  DeviceView,
+  DeviceListResponse,
 } from "./types";
 
 // Errors
 export { PhoenixKeyError } from "./types";
+
+// Device / key role helpers (fail-safe — see docstrings in types.ts)
+export { keyRoleFromClaim, keyRoleAtLeast } from "./types";
 
 // Fetcher (advanced — typically not needed)
 export { ERROR_CODE_MAP } from "./fetcher";
