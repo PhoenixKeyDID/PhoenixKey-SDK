@@ -27,28 +27,68 @@ did:phoenix
 ## 2. Method-Specific Identifier
 
 ```abnf
-did-phoenix        = "did:phoenix:" slot-component ":" hash-component
-slot-component     = 13base32char         ; base32 of 8-byte big-endian slot (fixed 13 chars, no padding)
-base32char         = %x61-7A / %x32-37     ; RFC 4648 base32 alphabet, lowercase (a-z 2-7)
-hash-component     = 64HEXDIG              ; BLAKE2b-256 hash, lowercase hex
+did-phoenix        = "did:phoenix:" genesis-component ":" hash-component
+genesis-component  = 13base32char          ; base32 of the 8-byte big-endian genesis
+                                           ; timestamp (fixed 13 chars, no padding)
+base32char         = %x61-7A / %x32-37     ; RFC 4648 base32 alphabet, lowercase: a-z / 2-7
+hash-component     = 64hexdiglc            ; BLAKE2b-256 digest, lowercase hex
+hexdiglc           = DIGIT / %x61-66       ; 0-9 / a-f
 ```
 
 `did:phoenix` is the **only** DID method defined by the PhoenixKey protocol;
-there is no `did:cardano` or other PhoenixKey method. The slot component is the
-fixed-width base32 encoding of the 8-byte big-endian Cardano slot at creation
-(always exactly 13 characters — leading-zero bytes are **not** stripped, so the
-component matches the resolver regex `[a-z2-7]{13}`).
+there is no `did:cardano` or other PhoenixKey method.
+
+The genesis component is the base32 encoding (RFC 4648, lowercase alphabet
+`abcdefghijklmnopqrstuvwxyz234567`, no padding) of the **8-byte big-endian POSIX
+millisecond** timestamp of the genesis transaction. It is **not** a Cardano slot
+number, and it is **never** a decimal rendering of the timestamp. The 13-character
+width is a property of the encoding, not of the timestamp range: 8 bytes are 64
+bits, RFC 4648 pads with a zero bit to 65 bits, which is exactly 13 groups of 5
+bits. Timestamp `0` therefore renders as `aaaaaaaaaaaaa` and the u64 maximum as
+`7777777777776` — every value matches the resolver regex `[a-z2-7]{13}`.
 
 **Construction:**
 
 ```
-hash = BLAKE2b-256( encode(entity_type) || (owner_did ?? "root") || encode(slot) || random_256 )
-did  = "did:phoenix:" || base32_nopad(slot) || ":" || hex(hash)
+preimage = enc_type ‖ enc_creator ‖ enc_genesis_ms ‖ rand_256 ‖ controller_pkh
+
+  enc_type         1 byte     entity-type constructor index (Person=0 … Character=9)
+  enc_creator      1 or 33 B  0x00                          for a root DID
+                              0x01 ‖ BLAKE2b-256(parent_did) for a child DID
+  enc_genesis_ms   8 bytes    big-endian POSIX milliseconds of the genesis transaction
+  rand_256        32 bytes    fresh randomness, revealed once at genesis
+  controller_pkh  28 bytes    BLAKE2b-224 key hash of the controlling Ed25519 key
+
+inner = BLAKE2b-256( preimage )
+did   = "did:phoenix:" ‖ base32_nopad_lower( be8(genesis_ms) ) ‖ ":" ‖ hex_lower( inner )
 ```
 
-**Example** (slot `145000000`, whose 8-byte big-endian encoding base32s to exactly 13 characters):
+(`‖` denotes byte-string concatenation with no length prefixes and no separators.)
+
+Two properties of this construction are load-bearing and MUST NOT be dropped by an
+implementation:
+
+- **`controller_pkh` is inside the preimage.** This is what makes the identifier
+  self-certifying: the DID string cannot be detached from the key that controls it
+  at genesis, so an attacker cannot claim a victim's DID string under their own
+  controller key without breaking BLAKE2b second-preimage resistance. An
+  implementation that omits this field is implementing a different, superseded
+  construction.
+- **The widths of `rand_256` and `controller_pkh` MUST be enforced.** The
+  concatenation carries no length prefixes. The first three fields delimit
+  themselves (`enc_type` is one fixed byte; `enc_creator` is prefix-free by its
+  `0x00`/`0x01` domain tag; `enc_genesis_ms` is 8 fixed bytes), but `rand_256` and
+  `controller_pkh` are adjacent with no separator, so moving a byte across their
+  boundary produces an identical preimage. Pinning either width restores
+  injectivity; the construction requires **both** (32 and 28), because both are
+  fixed-width by definition.
+
+**Example** — canonical test vector, entity type `Person`, root DID (no parent),
+`genesis_ms = 1754000000000`, `rand_256` = the byte `0x11` repeated 32 times,
+`controller_pkh` = the byte `0xb2` repeated 28 times:
+
 ```
-did:phoenix:aaaaaaaiusdea:3d7f9a1b2c4e56789012345678901234567890abcdef1234567890abcdef1234
+did:phoenix:aaaadgdcrqcaa:ff6bf9c8c1b0eb852813194ddb712ee57b8a46bdcfbc6f9cdf83678827628400
 ```
 
 ---
@@ -81,30 +121,30 @@ the following context:
 
 ```json
 {
-  "id": "did:phoenix:SLOT:HASH",
-  "controller": "did:phoenix:SLOT:HASH",
+  "id": "did:phoenix:GENESIS:HASH",
+  "controller": "did:phoenix:GENESIS:HASH",
   "securityLevel": "Biometric_Hardware",
   "verificationMethod": [
     {
-      "id": "did:phoenix:SLOT:HASH#hw-key-1",
+      "id": "did:phoenix:GENESIS:HASH#hw-key-1",
       "type": "EcdsaSecp256r1VerificationKey2019",
-      "controller": "did:phoenix:SLOT:HASH",
+      "controller": "did:phoenix:GENESIS:HASH",
       "publicKeyMultibase": "z..."
     },
     {
-      "id": "did:phoenix:SLOT:HASH#taad-key-1",
+      "id": "did:phoenix:GENESIS:HASH#taad-key-1",
       "type": "Ed25519VerificationKey2020",
-      "controller": "did:phoenix:SLOT:HASH",
+      "controller": "did:phoenix:GENESIS:HASH",
       "publicKeyMultibase": "z..."
     }
   ],
-  "authentication":        ["did:phoenix:SLOT:HASH#hw-key-1"],
-  "assertionMethod":       ["did:phoenix:SLOT:HASH#hw-key-1"],
-  "capabilityInvocation":  ["did:phoenix:SLOT:HASH#taad-key-1"],
-  "capabilityDelegation":  ["did:phoenix:SLOT:HASH#taad-key-1"],
+  "authentication":        ["did:phoenix:GENESIS:HASH#hw-key-1"],
+  "assertionMethod":       ["did:phoenix:GENESIS:HASH#hw-key-1"],
+  "capabilityInvocation":  ["did:phoenix:GENESIS:HASH#taad-key-1"],
+  "capabilityDelegation":  ["did:phoenix:GENESIS:HASH#taad-key-1"],
   "service": [
     {
-      "id": "did:phoenix:SLOT:HASH#taad",
+      "id": "did:phoenix:GENESIS:HASH#taad",
       "type": "PhoenixKeyTAAD",
       "serviceEndpoint": {
         "network": "cardano:mainnet",
@@ -148,7 +188,7 @@ The `schema_version` field (Math Spec §2.5.6) disambiguates the encoding. Durin
 
 ### 4.3 Read (Resolve)
 
-1. Parse `did:phoenix:SLOT:HASH` to extract slot and hash.
+1. Parse `did:phoenix:GENESIS:HASH` to extract the genesis timestamp and the hash component.
 2. Select the anchor per §4.2 (TAAD UTxO datum if present, else metadata label `6789`).
 3. **MUST** traverse the full ancestor ownership chain; if any ancestor is revoked or suspended, return `"deactivated": true`.
 4. Construct and return the DID Document from the selected anchor.
@@ -160,7 +200,7 @@ The `schema_version` field (Math Spec §2.5.6) disambiguates the encoding. Durin
 
 ### 4.5 Deactivate
 
-Submit a Cardano transaction setting `revoked_slot` in the TAAD datum. Requires current hardware key signature. Deactivation is **permanent and irreversible**. All descendant DIDs are implicitly deactivated (lazy cascade: resolvers MUST check ancestry on every resolution).
+Submit a Cardano transaction setting `revoked_ms` in the TAAD datum. Requires current hardware key signature. Deactivation is **permanent and irreversible**. All descendant DIDs are implicitly deactivated (lazy cascade: resolvers MUST check ancestry on every resolution).
 
 ---
 
