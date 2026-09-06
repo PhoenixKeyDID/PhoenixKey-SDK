@@ -99,6 +99,65 @@ export type QrPayload = {
   exp: number;
 };
 
+// ─── SSO — đổi thẻ phiên lấy thẻ app ──────────────────────────────────────────
+
+/**
+ * Đầu vào của `AuthModule.exchange()` (POST /auth/token/exchange).
+ *
+ * `aud` là **ServiceDID** của app đích (`did:phoenix:…`), không phải tên miền.
+ * `redirectUri` phải khớp CHÍNH XÁC một phần tử trong `serviceEndpoint[]` của
+ * DID Document thuộc `aud` — máy chủ so khớp nguyên chuỗi, không chuẩn hoá,
+ * nên thừa/thiếu dấu `/` cuối là trượt.
+ */
+export type TokenExchangeParams = {
+  /** Thẻ phiên 24 giờ đang giữ. Đi trong THÂN yêu cầu POST, không bao giờ trong URL. */
+  sessionToken: string;
+  /** ServiceDID của app đích — thành claim `aud` của thẻ app. */
+  aud: string;
+  /** URL gọi lại; phải nằm trong `serviceEndpoint[]` của DID Document của `aud`. */
+  redirectUri: string;
+  /** Nonce tuỳ chọn (≤ 64 ký tự) — máy chủ chép nguyên vào claim `nonce`. */
+  nonce?: string;
+};
+
+/**
+ * Thân phản hồi thô của POST /auth/token/exchange (snake_case như mọi endpoint
+ * khác — xem §"Quy ước đặt tên trên dây" trong INTEGRATION.md).
+ *
+ * `expires_in` là **tuỳ chọn**: bản máy chủ hiện tại KHÔNG gửi trường này
+ * (`dto/sso/TokenExchangeResponse.java` chỉ có hai trường). Khai sẵn ở đây để
+ * ngày máy chủ thêm thì SDK đọc được ngay mà không phải đổi kiểu — xem cách
+ * `exchange()` suy ra hạn dùng ở `auth.ts`.
+ */
+export type TokenExchangeResponse = {
+  app_token: string;
+  user_did: string;
+  /** Số giây còn hiệu lực, nếu máy chủ gửi. */
+  expires_in?: number;
+};
+
+/**
+ * Kết quả `AuthModule.exchange()` — đã đổi sang camelCase cho bên gọi.
+ *
+ * `expiresAt`/`expiresIn` KHÔNG viết cứng ở SDK: chúng đọc từ chính phản hồi
+ * của máy chủ (trường `expires_in` nếu có, ngược lại claim `exp` mà máy chủ đã
+ * ký trong thẻ). Máy chủ đổi TTL thì hai số này đổi theo, không cần phát hành
+ * lại SDK.
+ */
+export type TokenExchangeResult = {
+  /** Thẻ app — JWT Ed25519, ràng vào đúng một `aud`. */
+  appToken: string;
+  /** DID của người dùng, máy chủ trả lại cho tiện. */
+  userDid: string;
+  /** Thời điểm hết hạn, epoch **giây** — lấy từ claim `exp` do máy chủ ký. */
+  expiresAt: number;
+  /**
+   * Số giây còn lại tính tại lúc gọi. Có thể ≤ 0 nếu đồng hồ máy gọi chạy
+   * nhanh hơn máy chủ — đó là tin, không phải lỗi cần giấu.
+   */
+  expiresIn: number;
+};
+
 // ─── Sign Request ─────────────────────────────────────────────────────────────
 
 /**

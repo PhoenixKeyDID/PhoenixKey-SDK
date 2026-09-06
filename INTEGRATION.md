@@ -3,7 +3,7 @@
 > **Là gì**: Khai báo tích hợp của platform **PhoenixKey** — tuân thủ **MagicLamp Platform Integration Standard** (L1 Ecosystem Standard, `SuperApp/Specs/INTEGRATION-STANDARD.md`, v0.1). File này KHÔNG định nghĩa lại chuẩn; nó là bản CONFORMANCE của PhoenixKey theo chuẩn đó.
 > **Kiểu tích hợp**: `silent` (§1.3) — PhoenixKey không chiếm UI; cung service API + capability cho module khác. KHÔNG khai `entrypoint`/`route`/`icon`/`navSlot`.
 > **Vai trò đặc biệt**: PhoenixKey DID là **root danh tính toàn hệ** (§3.1) — mọi module tiêu thụ danh tính qua service API của PhoenixKey.
-> **Owner**: Aladin (founder) · Phoenix agent giữ interface contract. **Cập nhật**: 2026-08-30 (mục 4+6 — gỡ blocker JWKS đã lỗi thời, sửa checkbox DPoP ghi sai so với mã `app_token` hiện tại).
+> **Owner**: Aladin (founder) · Phoenix agent giữ interface contract. **Cập nhật**: 2026-09-06 (thêm §4.1 hướng dẫn `client.auth.exchange()`; gỡ nốt blocker JWKS lỗi thời còn sót ở §2.1 + §"Cấu hình prod" — Database PR #123 đã merge; sửa TTL thẻ phiên 1h → **24 giờ** cho khớp cấu hình máy chủ; ghi rõ hệ quả của `app_token` là bearer thuần ở mục 6).
 > **Nhà canonical**: file này ở **PhoenixKey-SDK** (repo công khai, versioned) — nơi mọi integrator bên ngoài + SuperApp fetch. Bản ở root `PhoenixKeyDID/PhoenixKey-Integration.md` chỉ là con trỏ cho người đọc.
 
 ---
@@ -66,7 +66,7 @@ Cột trạng thái:
 | Năng lực | Endpoint (prefix `/api/v1`) | Trạng thái |
 |---|---|---|
 | **Tạo DID** | `POST /identity/register` (Person) · `POST /identity/org/create` · `/identity/org/founding` · `POST /identity/asset/create` · resolve `GET /identity/{did}/document` · `/identifiers/{did}` (W3C) · `/identity/{did}/pubkey` · `/identity/{did}/status` | **READY** |
-| **Chữ ký phiên web** (QR-pairing) | `POST /auth/session/init` → `GET /auth/session/{id}/stream` (SSE) → mobile `POST /auth/session/{id}/approve` → web nhận `sessionToken` (JWT 1h) + `linkedDeviceToken` (30d); SSO `POST /auth/token/exchange` | **READY** |
+| **Chữ ký phiên web** (QR-pairing) | `POST /auth/session/init` → `GET /auth/session/{id}/stream` (SSE) → mobile `POST /auth/session/{id}/approve` → web nhận `session_token` (JWT **24 giờ** — `PHOENIXKEY_SESSION_TTL_SECONDS`, mặc định 86400) + `linked_device_token` (30 ngày); SSO `POST /auth/token/exchange` → `app_token` 15 phút, xem §"Đổi thẻ phiên lấy thẻ app" | **READY** |
 | **Nhận ADA / xem số dư** | `POST /wallet/register` (Phoenix custody) · `POST /wallet/standard/register` (CIP-1852) · `GET /wallet/{did}/all` · `GET /wallet/standard/{did}` (số dư ADA/LAMP/CARP từ Blockfrost). **Số lượng on-chain trả về là JSON _string_** (oildrop/lovelace/nanoMAGIC) — xem §"Hợp đồng số lớn" | **READY** (string-serialize: Database PR #102 đã merge 2026-07-30) |
 | **GetLAMP v5** (khoá 1001 LAMP vào vault) | `POST /activation/getlamp/build` (dựng tx chưa ký vào-vault + khoá `conditional_lamp`) → client Enclave ký → `POST /activation/getlamp/submit` | **KHUNG** — chờ deploy validator `activation_vault` |
 | Vault Wakeme — đọc | `GET /activation/vault/{did}` (bảng điều khiển 2 pha) · `GET /activation/pot` (sức khoẻ pot + D hiện tại) | **KHUNG** — chờ deploy validator + Registry |
@@ -77,7 +77,7 @@ Cột trạng thái:
 | Seed export | `POST /seed/export-request` (rotate-before-reveal) | **READY** |
 | Sign-relay (web tạo intent, mobile ký) | `POST /sign/request` → `GET /sign/request/{id}` → `POST /sign/{id}/approve` (verify ECDSA + SSE trả sig) | **READY** |
 | Config/health | `GET /health/cardano` (network, `lamp_policy_id`, hash+địa chỉ TAAD) · `GET /actuator/health` | **READY** |
-| **JWKS** (verify JWT do PhoenixKey phát) | `GET /api/v1/.well-known/jwks.json` | 🔴 **HỎNG TRÊN PROD** — trả **400** kể cả khi KHÔNG gửi header `Origin`, tức chặn cả fetch server-to-server. Đo 2026-08-05. Vá đang ở Database **PR #123**. Đường gốc miền `/.well-known/jwks.json` trả **404** (context-path `/api/v1`) — cần nginx rewrite, việc ops |
+| **JWKS** (verify JWT do PhoenixKey phát) | `GET /api/v1/.well-known/jwks.json` | **READY** — lỗi CORS trả 400 cho mọi client (kể cả server-to-server) đã vá: Database **PR #123 merge 2026-08-05**, mapping riêng `/.well-known/**` với `allowCredentials(false)` đăng ký TRƯỚC `/**` (`config/WebConfig.java`). ⚠ Còn lại **việc ops**: đường gốc miền `/.well-known/jwks.json` vẫn 404 vì `context-path=/api/v1` — RFC 8615 đòi ở gốc miền, cần nginx rewrite. Cho tới khi có rewrite, client phải trỏ thẳng đường `/api/v1/...` (mặc định của `AppTokenVerifier` đã trỏ đúng) |
 | **Sinh MAGIC từ số dư LAMP** | `GET /activation/vault/{did}/magic` (MAGIC hằng ngày — **đọc số dư**, không đụng LAMP) · `GET /activation/gen-entry` (ranh giới engine Gen ↔ SDK MAGIC). Trường `magic` trong `GET /wallet/{did}/all` hiện trả 0 | **KHUNG** — chờ engine Gen bên MAGIC. Hai đường chính thống: **InstantGen** (tiêu ngay) + **ScheduleGen** (các epoch sau). Không có đường thứ ba |
 | **Gửi ADA** (build/submit tx tổng quát) | `POST /wallet/tx/submit` — client dựng+ký CBOR local, backend relay lên chain (không state). Khác `/activation/{id}/submit-tx` (gắn state machine activation) | **READY** (Database PR #76 merge 2026-07-24) |
 | **OrgDID uỷ-quyền thao tác LAMP** | `POST /identity/org/{orgDid}/mint-lamp` — OrgDID single-owner ký challenge → server phát **Grant** uỷ-quyền (`action` = `mint:LAMP`/`pot:fund`/`pot:distribute`). **KHÔNG đúc LAMP, KHÔNG submit tx** — chỉ verify chữ ký controller + phát Grant tự-verify (Anchorme §11.2). Xem mẫu §"Grant uỷ-quyền LAMP" | **READY** (Database PR #119 merge 2026-08-03) — nhưng phía TIÊU Grant chưa có, xem ghi chú cuối mục Grant |
@@ -202,7 +202,7 @@ Tổng cung LAMP = 3,6×10¹⁶ oildrop > `Number.MAX_SAFE_INTEGER` (9,007×10¹
 >
 > `magic_policy_id` rỗng là **đúng theo thiết kế** — MAGIC là tài khoản trong vault, không có policy-id. Client KHÔNG được coi trường rỗng này là lỗi cấu hình.
 >
-> **⚠ Còn hỏng:** `/.well-known/jwks.json` chưa gọi được. Ở gốc miền → 404 (thiếu rewrite nginx sang `/api/v1`); dưới `/api/v1/.well-known/jwks.json` → **400** với thông báo cấu hình CORS (`allowCredentials=true` không đi cùng `allowedOrigins="*"`). Lỗi này chặn **mọi** client, kể cả gọi server-to-server không gửi header `Origin` — đã kiểm bằng `curl -v`. Client cần khoá công khai issuer thì tạm chưa có đường lấy qua JWKS.
+> **JWKS — lỗi 400 đã vá, chỉ còn việc ops.** Bản trước ghi `/.well-known/jwks.json` "chưa gọi được": phần **400** (CORS — `allowCredentials=true` không đi cùng `allowedOrigins="*"`, chặn cả gọi server-to-server) ĐÃ LỖI THỜI, vá ở Database **PR #123 merge 2026-08-05**. Phần còn đúng: đường **gốc miền** vẫn trả **404** vì `context-path=/api/v1`, cần nginx rewrite — việc ops, chưa làm. Client lấy khoá công khai issuer qua `GET /api/v1/.well-known/jwks.json`.
 
 > **On-chain (tham chiếu):** 2-of-2 `controller_pkh ∧ device_pkh` đã canonical trong validator (`auth_logic.ak`, 463 test PASS) nhưng CHƯA re-apply vào deploy artifact — anchor/ví đang live là bản 1-of-1 cũ. `did_payment`/`did_stake`/`limit_meter_vault`/`activation_vault` compile+test xanh, phần lớn BUILT chưa deploy. Chỉ TAAD có UTxO thật trên Preview.
 
@@ -219,6 +219,34 @@ Tổng cung LAMP = 3,6×10¹⁶ oildrop > `Number.MAX_SAFE_INTEGER` (9,007×10¹
 - **Chuẩn (§5.1) đòi** token host nhận là **audience-bound + sender-constrained (DPoP), sống-ngắn**.
   Đây là mục tiêu của §5.1, **KHÔNG phải hiện trạng** — xem sửa ở mục 6 bên dưới.
 - **Issuer-side mint EdDSA + JWKS: ĐÃ XONG** (`JwksController` live trên `main` PhoenixKey-Database từ trước nhánh này — `GET /.well-known/jwks.json`, verify được qua `AppTokenVerifier` ở `src/verifier.ts`, test PASS). Dòng "blocker thuộc đội backend" ở bản trước ĐÃ LỖI THỜI — gỡ. **Blocker còn lại của kênh 3 là sender-constrained (DPoP)**, xem mục 6.
+
+### 4.1 Đổi thẻ phiên lấy thẻ app — `client.auth.exchange()`
+
+**Đừng đưa `session_token` cho app đối tác.** Đó là thẻ toàn quyền của người dùng, sống **24 giờ**: nó mở mọi endpoint của người đó — đọc ví, tạo yêu cầu ký, đổi tên và thu hồi thiết bị. Trao nó đi là trao trọn tài khoản trong một ngày, và không có đường thu lại ngoài việc bắt người dùng đăng nhập lại toàn hệ.
+
+Thứ được trao đi phải là **`app_token`**: ràng vào **đúng một `aud`** (ServiceDID của app đích) và sống **15 phút** (`PHOENIXKEY_SSO_APP_TOKEN_TTL`, mặc định `15m`). App nhận không dùng nó ở nơi khác được, và nó tự chết rất nhanh.
+
+```ts
+const { appToken, expiresIn } = await client.auth.exchange({
+  sessionToken: client.session.getSessionToken()!,
+  aud: "did:phoenix:<b32-13>:<hex-64>",      // ServiceDID app đích, KHÔNG phải tên miền
+  redirectUri: "https://partner.example/callback",
+  // nonce: "…"                              // tuỳ chọn, ≤ 64 ký tự, chép vào claim `nonce`
+});
+```
+
+Phía app đích verify bằng `AppTokenVerifier` (`@phoenixkeydid/phoenixkey-sdk/verifier`) — chữ ký Ed25519 theo JWKS, hạn dùng, và `aud`.
+
+**Bốn điều dễ sai:**
+
+1. **`redirect_uri` so khớp NGUYÊN CHUỖI** với một phần tử trong `serviceEndpoint[]` của DID Document thuộc `aud`. Máy chủ không chuẩn hoá — thừa/thiếu dấu `/` cuối là trượt. Sai ở đây trả `redirect_uri_mismatch` (400), là lỗi **cấu hình app đích**, không phải lỗi người dùng: cho đăng nhập lại không cứu được gì.
+2. **Đừng viết cứng 900 giây.** Dùng `expiresIn` trả về. SDK đọc nó từ trường `expires_in` nếu máy chủ gửi, ngược lại từ claim `exp` mà chính máy chủ đã ký trong thẻ. Viết cứng thì ngày máy chủ đổi TTL, phía tích hợp hết hạn sai lúc mà không có gì báo.
+3. **`session_token` đi trong THÂN yêu cầu POST**, không bao giờ trong chuỗi truy vấn. Tham số URL nằm lại trong lịch sử trình duyệt, trong header `Referer` gửi sang trang khác, và trong log truy cập của mọi proxy trên đường. `exchange()` chốt điều này bằng một bài kiểm.
+4. **Có hạn mức lượt đổi trên mỗi `session_token`** (`rate_limited`, 429) — đổi khi cần, đừng đổi trong vòng lặp.
+
+Mã lỗi phân biệt được, đều là `PhoenixKeyError`: `unauthorized` (401 — phiên chết/khoá bị thu hồi → đăng nhập lại) · `signature_invalid` (403 — thẻ hỏng/hết hạn) · `redirect_uri_mismatch` (400) · `service_did_not_found` (404 — `aud` chưa công bố endpoint nào) · `rate_limited` (429) · `enum_invalid_value` (400 — `aud` sai khuôn `did:phoenix:…`, `nonce` quá 64 ký tự).
+
+> ⚠ **`app_token` là thẻ mang-là-dùng (bearer).** Chưa có ràng buộc sở-hữu-khoá (DPoP) — xem mục 6. Ai cầm được chuỗi thẻ thì dùng được thẻ, nguyên vẹn tới `exp`, không cần chứng minh gì thêm. Nên: **không ghi vào log**, không đặt vào URL, không cất `localStorage` — giữ trong bộ nhớ tiến trình, và xin thẻ mới thay vì kéo dài một thẻ.
 
 ## 5. Anchor on-chain đã deploy (bằng chứng — Preprod)
 
@@ -242,7 +270,8 @@ Giao dịch minh hoạ khác: Wakeme 1001 tLAMP Preview `01139ba8af1f7556b70a821
 - [x] Credential/biometric KHÔNG vào WebView (DID gốc/sinh trắc chỉ sống trong Secure Enclave / app gốc).
 - [x] `app_token` (đổi qua `POST /auth/token/exchange`) audience-bound (`aud` = ServiceDID) + `nonce` (nếu caller truyền) + sống-ngắn (15 phút mặc định) — verify được qua JWKS (Ed25519, `GET /.well-known/jwks.json`), xem `AppTokenVerifier` ở `src/verifier.ts`.
 - [x] Issuer-side JWKS EdDSA — **đã xong** (xem trên; bản trước ghi đây là blocker của đội backend, nay đã lỗi thời — gỡ).
-- [ ] **sender-constrained (DPoP) — CHƯA có.** `app_token` hiện là Bearer thuần ký EdDSA — bên nào cầm được chuỗi token dùng được nguyên vẹn tới `exp`, không có cơ chế ràng nó vào một khoá phía client như DPoP đòi. Dòng checklist này từng bị đánh dấu "[x]" (ghi nhầm là đã có DPoP) — sửa lại ở PR này cho khớp mã. Cần track riêng nếu §5.1 bắt buộc DPoP trước khi mở kênh 3 rộng rãi cho integrator ngoài.
+- [ ] **sender-constrained (DPoP) — CHƯA có.** `app_token` là **bearer thuần** ký EdDSA. Kiểm lại 2026-09-06 ở hàm đúc thẻ (`security/JwtServiceImpl.java`, `mintAppToken`): các claim được đặt là `iss`, `sub`, `aud`, `type`, `iat`, `exp`, và tuỳ chọn `nonce` / `key_id` / `key_role` — **không claim nào mang bằng chứng sở-hữu-khoá** (không `cnf`/`jkt`, không đòi chữ ký DPoP kèm mỗi lượt gọi). Dòng này từng bị đánh dấu "[x]" (ghi nhầm là đã có DPoP) — đã sửa cho khớp mã và giữ nguyên.
+  **Hệ quả cho bên tích hợp, không phải chuyện lý thuyết:** ai cầm được chuỗi thẻ thì dùng được thẻ, nguyên vẹn tới `exp`, không cần chứng minh gì thêm. Nghĩa là thẻ phải sống ngắn (15 phút, đừng nới), **không được ghi vào log** (log ứng dụng, log truy cập proxy, sự kiện analytics, báo cáo lỗi), không đặt vào URL — và cất trong bộ nhớ tiến trình chứ đừng `localStorage`. Cần track riêng nếu §5.1 bắt buộc DPoP trước khi mở kênh 3 rộng rãi cho integrator ngoài.
 
 **Frontend** — N/A cho silent (không có màn feature; UI do module feature tiêu thụ capability, thuộc đội SuperApp / đội backend).
 

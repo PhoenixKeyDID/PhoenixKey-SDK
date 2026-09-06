@@ -37,6 +37,12 @@ export const ERROR_CODE_MAP: Record<number, string> = {
   1301: "session_not_found",
   1302: "session_expired",
   1303: "session_already_approved",
+  1304: "unauthorized",
+  1308: "session_role_claim_missing",
+  // 133x — đổi thẻ phiên lấy thẻ app (POST /auth/token/exchange)
+  1330: "service_did_not_found",
+  1331: "redirect_uri_mismatch",
+  1332: "rate_limited",
   1401: "sign_request_not_found",
   1402: "sign_request_expired",
   1403: "signature_invalid",
