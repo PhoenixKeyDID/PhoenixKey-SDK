@@ -324,6 +324,20 @@ export class WakemeModule {
   // Kept so existing integrations keep compiling. These still call
   // `/activation/*` and have no `/wakeme/*` counterpart — the flow was retired,
   // not renamed.
+  //
+  // 🔴 ĐO 2026-09-08 — sáu phương thức dưới đây KHÔNG CÒN máy chủ nào phục vụ.
+  // Không phải "sắp bỏ": bỏ rồi. `PhoenixKey-Database` gỡ luồng VND-Genie ngày
+  // 2026-09-03 (`docs/VND-GENIE-REMOVAL.md`), và `ActivationVaultController`
+  // hôm nay chỉ còn bind `/getlamp/build` · `/getlamp/submit` · `/vault/{did}`
+  // · `/vault/{did}/magic` · `/getmagic/quote` · `/getmagic/checkout`
+  // · `/getmagic/{orderId}` · `/gen-entry` · `/pot`. Sáu đường mà khối này gọi
+  // — `/activation/initiate`, `/{id}/status`, `/{id}/events`, `/{id}/cancel`,
+  // `/{id}/confirm-payment`, `/{id}/submit-tx` — không khớp handler nào ⇒ 404.
+  //
+  // Nên gọi chúng là tiêu một lượt đi mạng để nhận 404, không phải là dùng một
+  // tính năng cũ. Chưa đổi thành ném lỗi ngay vì đó là quyết định về chính sách
+  // tương thích của thư viện công khai (bên nào còn ghim máy chủ bản cũ thì đổi
+  // là phá họ) — xem `PhoenixKey-SDK#9`.
 
   /**
    * @deprecated Retired flow. Use {@link buildGetLamp}.
