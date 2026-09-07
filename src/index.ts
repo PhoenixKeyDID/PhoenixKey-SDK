@@ -91,6 +91,10 @@ export type {
   LoginSessionInit,
   LoginSessionStatus,
   QrPayload,
+  // SSO — đổi thẻ phiên lấy thẻ app (POST /auth/token/exchange)
+  TokenExchangeParams,
+  TokenExchangeResponse,
+  TokenExchangeResult,
   // Sign Request
   SignIntent,
   SignRequestCreate,

@@ -1,0 +1,79 @@
+name: CI
+
+# Cổng cho mọi thay đổi vào SDK. Ba bước, đúng ba lệnh đã có sẵn trong
+# `package.json` — không bịa lệnh mới, không thêm công cụ mới.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 là bậc thấp nhất còn được hỗ trợ mà mã này chạy được: `fetch`/
+        # `Response` toàn cục (bài kiểm dùng trực tiếp), `AbortSignal.timeout`
+        # (`src/fetcher.ts`), `Buffer.from(…, "base64url")`. 22 là bậc LTS hiện
+        # hành — giữ cả hai để bắt sớm thứ chỉ hỏng ở một phía.
+        node: ["20", "22"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # KHÔNG dùng `npm ci`: kho cố ý bỏ `package-lock.json` khỏi git
+      # (xem `.gitignore` — "publish from clean state"), mà `npm ci` bắt buộc
+      # phải có lockfile. Đổi sang `npm ci` thì phải commit lockfile trước, đó
+      # là quyết định riêng của chủ kho, không phải việc của tệp này.
+      #
+      # `NPM_TOKEN` rỗng là CỐ Ý: `.npmrc` có dòng thay thế biến cho registry
+      # GitHub Packages của scope `@phoenixkeydid`. Không phụ thuộc nào của kho
+      # nằm trong scope đó, nên lượt cài không cần thẻ; đặt rỗng để npm không
+      # cảnh báo biến chưa khai.
+      - name: Cài phụ thuộc
+        run: npm install --no-audit --no-fund
+        env:
+          NPM_TOKEN: ""
+
+      - name: Kiểm kiểu (tsc --noEmit)
+        run: npm run typecheck
+
+      - name: Chạy bài kiểm (jest)
+        run: npm test
+
+      - name: Dựng bản phát hành (cjs + esm + .d.ts)
+        run: npm run build
+
+      # Bản dựng phải ra đủ ba dạng cho CẢ HAI đầu vào công bố trong
+      # `package.json#exports`. Thiếu một tệp thì `npm publish` vẫn chạy, và
+      # người tích hợp mới là người phát hiện — muộn hơn hẳn.
+      - name: Soát bản dựng ra đủ tệp
+        run: |
+          set -eu
+          for f in \
+            dist/index.js dist/index.mjs dist/index.d.ts \
+            dist/verifier.js dist/verifier.mjs dist/verifier.d.ts
+          do
+            test -s "$f" || { echo "THIẾU hoặc rỗng: $f"; exit 1; }
+            echo "OK: $f"
+          done
+
+# `npm run lint` CỐ Ý không có ở đây. `package.json` khai lệnh `eslint src --ext .ts`
+# nhưng `eslint` KHÔNG nằm trong `devDependencies` và kho không có tệp cấu hình
+# eslint nào — lệnh đó hỏng sẵn từ trước nhánh này, không phải do CI. Bật lên
+# nghĩa là thêm một bước đỏ vĩnh viễn, tức dạy người ta bỏ qua màu đỏ.
+# Muốn có lint thì làm thành một đợt việc riêng: thêm `eslint` +
+# `typescript-eslint` vào `devDependencies`, viết `eslint.config.js`, dọn cho
+# xanh, RỒI mới thêm bước vào đây.
