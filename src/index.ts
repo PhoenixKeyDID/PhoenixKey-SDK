@@ -66,6 +66,55 @@ export type {
 } from "./wakeme";
 export { DeviceModule } from "./device";
 
+// Guardian — mạng lưới người bảo hộ khôi phục
+export { GuardianModule } from "./guardian";
+export type {
+  GuardianMutateParams,
+  GuardianCountResult,
+  GuardianEntry,
+  GuardianList,
+} from "./guardian";
+
+// OrgDID — vòng đời tổ chức + Grant uỷ quyền LAMP
+export { OrgModule } from "./org";
+export type {
+  OrgSummary,
+  OrgList,
+  OrgCreateParams,
+  OrgCreateResult,
+  OrgFounderInput,
+  OrgFoundingParams,
+  OrgFoundingResult,
+  OrgUpgradeAuthorityParams,
+  OrgUpgradeAuthorityResult,
+  OrgLampGrantAction,
+  OrgLampGrantParams,
+  OrgLampGrant,
+  OrgLampGrantSummary,
+  OrgLampGrantList,
+  OrgLampGrantConsumeParams,
+  OrgLampGrantConsumeResult,
+  OrgLampGrantRevokeParams,
+  OrgLampGrantRevokeResult,
+} from "./org";
+
+// Pool + uỷ quyền stake (chỉ đọc)
+export { PoolModule } from "./pool";
+export type { PoolListPage, PoolDetail, DelegationStatus } from "./pool";
+
+// Resolver W3C + JWKS
+export { ResolverModule, isDeactivated, isResolved } from "./resolver";
+export type {
+  ResolvedDidDocument,
+  DidResolutionError,
+  DidResolutionMetadata,
+  DidDocumentMetadata,
+  DidResolutionResult,
+  ResolveOptions,
+  Jwks,
+  JwksKey,
+} from "./resolver";
+
 // SSE primitive (advanced — for custom flows)
 export { ResilientSSE } from "./sse";
 export type { SseOptions } from "./sse";
