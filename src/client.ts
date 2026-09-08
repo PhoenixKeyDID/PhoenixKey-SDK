@@ -27,6 +27,10 @@ import { SupportModule } from "./support";
 import { WalletModule } from "./wallet";
 import { WakemeModule } from "./wakeme";
 import { DeviceModule } from "./device";
+import { GuardianModule } from "./guardian";
+import { OrgModule } from "./org";
+import { PoolModule } from "./pool";
+import { ResolverModule } from "./resolver";
 import * as session from "./session";
 
 export class PhoenixKeyClient {
@@ -54,6 +58,14 @@ export class PhoenixKeyClient {
   readonly wakeme: WakemeModule;
   /** Vòng đời thiết bị tự-quản — xem/đặt tên/thu hồi (đòi phiên vai owner). */
   readonly devices: DeviceModule;
+  /** Mạng lưới người bảo hộ khôi phục — thêm/gỡ/liệt kê (Social Recovery). */
+  readonly guardians: GuardianModule;
+  /** Vòng đời OrgDID + Grant uỷ quyền thao tác LAMP. */
+  readonly org: OrgModule;
+  /** Pool + uỷ quyền stake — CHỈ đọc, chuyển tiếp từ Blockfrost. */
+  readonly pool: PoolModule;
+  /** Tra DID theo chuẩn W3C (interop) + bộ khoá công khai JWKS. */
+  readonly resolver: ResolverModule;
 
   /** localStorage helpers. */
   readonly session: typeof session;
@@ -126,6 +138,15 @@ export class PhoenixKeyClient {
       session.getSessionToken,
     );
     this.devices = new DeviceModule(this.config.apiBaseUrl, session.getSessionToken);
+    this.guardians = new GuardianModule(
+      this.config.apiBaseUrl,
+      session.getSessionToken,
+    );
+    this.org = new OrgModule(this.config.apiBaseUrl, session.getSessionToken);
+    // Hai module dưới chỉ đọc dữ liệu công khai — không nhận thẻ phiên, để
+    // không có đường nào lỡ gắn thẻ vào một lượt gọi không cần thẻ.
+    this.pool = new PoolModule(this.config.apiBaseUrl);
+    this.resolver = new ResolverModule(this.config.apiBaseUrl);
   }
 
   /**

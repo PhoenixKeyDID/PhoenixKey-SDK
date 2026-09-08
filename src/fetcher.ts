@@ -38,11 +38,31 @@ export const ERROR_CODE_MAP: Record<number, string> = {
   1302: "session_expired",
   1303: "session_already_approved",
   1304: "unauthorized",
+  // Chỉ gặp ở `/identifiers/*` khi `Accept` không khớp hai media type resolver
+  // phục vụ. Thân lúc đó là bọc `{code,message,result}` chuẩn, KHÔNG phải
+  // phong bì DID Resolution ba phần — xem `ResolverModule.resolve`.
+  1305: "not_acceptable",
   1308: "session_role_claim_missing",
   // 133x — đổi thẻ phiên lấy thẻ app (POST /auth/token/exchange)
   1330: "service_did_not_found",
   1331: "redirect_uri_mismatch",
   1332: "rate_limited",
+  // 134x — đúc OrgDID / AssetDID có chữ ký chủ sở hữu
+  1340: "owner_did_not_found",
+  1341: "owner_signature_invalid",
+  1343: "org_founders_invalid",
+  1344: "org_threshold_invalid",
+  1345: "org_authority_not_upgradable",
+  1348: "org_grant_unsupported",
+  1349: "org_grant_invalid",
+  // 137x — pool (đọc qua Blockfrost) + vòng đời Grant uỷ quyền LAMP
+  1370: "pool_not_found",
+  1372: "grant_not_found",
+  1373: "grant_already_consumed",
+  1374: "grant_already_revoked",
+  1375: "grant_expired",
+  1376: "grant_consumer_signature_invalid",
+  1377: "grant_consumer_key_not_configured",
   1401: "sign_request_not_found",
   1402: "sign_request_expired",
   1403: "signature_invalid",
@@ -57,12 +77,19 @@ export const ERROR_CODE_MAP: Record<number, string> = {
   3005: "key_status_invalid",
   3006: "nonce_already_used",
   3008: "last_owner_key",
+  // Mốc nước opSeq dùng CHUNG giữa `/keys/*` và `/guardians/*` — một chuỗi
+  // thao tác duy nhất cho mỗi DID (`GET /identity/{did}/op-seq`).
+  3009: "op_seq_replay",
+  3010: "op_seq_too_far_ahead",
   3012: "device_name_invalid",
   4001: "guardian_not_found",
   4002: "guardian_already_exists",
-  4003: "guardian_signature_invalid",
-  4004: "guardian_insufficient",
-  4005: "guardian_already_revoked",
+  // ĐO 2026-09-08 đối chiếu `ErrorCode.java`: 4003 là GUARDIAN_SELF_NOT_ALLOWED
+  // (400 — tự đặt mình làm người bảo hộ), KHÔNG phải lỗi chữ ký. Chữ ký
+  // guardian sai trả 1403 SIGNATURE_INVALID như mọi luồng ký khác. Bảng này
+  // trước đây còn khai 4004/4005 mà enum máy chủ không có số nào —
+  // đã gỡ, giữ lại thì người đọc tưởng có nhánh lỗi để bắt.
+  4003: "guardian_self_not_allowed",
   5001: "taad_state_not_found",
   5002: "taad_state_stale",
   5003: "taad_reorg_detected",
@@ -70,6 +97,7 @@ export const ERROR_CODE_MAP: Record<number, string> = {
   5005: "taad_sequence_mismatch",
   5101: "cardano_tx_failed",
   5102: "cardano_resolve_failed",
+  9501: "not_yet_implemented",
   9800: "enum_invalid_value",
   9998: "system_unknown_error",
   9999: "internal_error",
