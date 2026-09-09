@@ -358,7 +358,30 @@ export type AppTokenClaims = {
 };
 
 export type AppTokenVerifierConfig = {
-  /** PhoenixKey API base URL. Default: "https://api.phoenixkey.me". */
+  /**
+   * PhoenixKey API base URL, **including the `/api/v1` context path**.
+   * Default: `"https://api.phoenixkey.me/api/v1"` — same shape as
+   * {@link VerifierConfig.phoenixkeyApiUrl}.
+   *
+   * The context path is not optional. Every route the backend serves lives
+   * under `/api/v1`, JWKS included; the bare origin returns 404. Measured
+   * 2026-09-08 against production:
+   *
+   * ```
+   * GET https://api.phoenixkey.me/api/v1/.well-known/jwks.json → 200 {"keys":[…]}
+   * GET https://api.phoenixkey.me/.well-known/jwks.json         → 404
+   * ```
+   *
+   * The old default here was the bare origin, so an integrator who
+   * constructed `new AppTokenVerifier()` — exactly what the docs told them to
+   * write — could never verify a single `app_token`: every call died at
+   * `jwks_fetch_failed`. That is the last link of the login handover, so the
+   * whole capability was dark for anyone using the default.
+   *
+   * RFC 8615 does want `.well-known` at the domain root, and one day an nginx
+   * rewrite may put it there. Until that rewrite exists **and is measured**,
+   * this default points at the path that actually answers.
+   */
   phoenixkeyApiUrl?: string;
   /** TTL for in-memory JWKS cache, ms. Default: 1 hour (matches server `Cache-Control`). */
   jwksCacheTtlMs?: number;
@@ -371,8 +394,22 @@ type JwtHeader = { alg: string; kid?: string; typ?: string };
 const DEFAULT_JWKS_CACHE_TTL = 60 * 60 * 1000;
 
 /**
+ * Đường mặc định tới JWKS — GỒM context-path `/api/v1`.
+ *
+ * Tách thành hằng số có tên để bài kiểm ghim được đúng CHUỖI này (xem
+ * `test/jwksUrl.test.ts`), chứ không ghim tên hàm dựng URL. Ghim tên thì đổi
+ * chuỗi vẫn xanh, mà chuỗi mới là thứ quyết định lượt gọi đi tới đâu.
+ */
+export const DEFAULT_PHOENIXKEY_API_URL = "https://api.phoenixkey.me/api/v1";
+
+/** Hậu tố JWKS ghép sau `phoenixkeyApiUrl`. */
+export const JWKS_PATH = "/.well-known/jwks.json";
+
+/**
  * Verifies an `app_token` JWT's Ed25519 signature against PhoenixKey's
- * published JWKS (`GET /.well-known/jwks.json`), then returns its claims.
+ * published JWKS (`GET /api/v1/.well-known/jwks.json` — the context path is
+ * part of the address, see {@link AppTokenVerifierConfig.phoenixkeyApiUrl}),
+ * then returns its claims.
  *
  * **Invariant this class exists to hold: claims are NEVER read before the
  * signature has been verified.** Do not add a "just decode the payload, I
@@ -398,7 +435,7 @@ export class AppTokenVerifier {
   private cachedJwks: { jwks: Jwks; expiresAt: number } | null = null;
 
   constructor(config: AppTokenVerifierConfig = {}) {
-    this.phoenixkeyApiUrl = (config.phoenixkeyApiUrl ?? "https://api.phoenixkey.me").replace(/\/+$/, "");
+    this.phoenixkeyApiUrl = (config.phoenixkeyApiUrl ?? DEFAULT_PHOENIXKEY_API_URL).replace(/\/+$/, "");
     this.jwksCacheTtl = config.jwksCacheTtlMs ?? DEFAULT_JWKS_CACHE_TTL;
   }
 
@@ -506,16 +543,36 @@ export class AppTokenVerifier {
     if (this.cachedJwks && this.cachedJwks.expiresAt > Date.now()) {
       return this.cachedJwks.jwks;
     }
-    const url = `${this.phoenixkeyApiUrl}/.well-known/jwks.json`;
+    const url = `${this.phoenixkeyApiUrl}${JWKS_PATH}`;
     const res = await fetch(url, { headers: { Accept: "application/json" } });
     if (!res.ok) {
       throw new PhoenixKeyError({
         status: res.status,
         code: "jwks_fetch_failed",
-        message: `JWKS fetch failed: HTTP ${res.status}`,
+        // Nói ra ĐƯỜNG đã gọi, và nêu nghi phạm số một khi là 404. Bản trước
+        // chỉ nói "HTTP 404" — người tích hợp không có cách nào biết là mình
+        // thiếu context-path `/api/v1`, vì họ có gõ đường nào đâu, họ dùng mặc
+        // định. Một lỗi không tự chỉ ra được chỗ sửa thì tốn hàng giờ.
+        message:
+          `JWKS fetch failed: HTTP ${res.status} tại ${url}` +
+          (res.status === 404
+            ? ` — kiểm tra 'phoenixkeyApiUrl' đã kèm context-path chưa. ` +
+              `Máy chủ phục vụ MỌI tuyến dưới '/api/v1'; gốc miền trần trả 404. ` +
+              `Mặc định đúng: '${DEFAULT_PHOENIXKEY_API_URL}'.`
+            : ""),
       });
     }
     const jwks = (await res.json()) as Jwks;
+    // Hỏng-đóng: một phản hồi 200 mà không có mảng `keys` (proxy trả trang lỗi,
+    // bản máy chủ khác khuôn) sẽ làm `resolvePubkey` ném TypeError trần —
+    // không đọc ra được nguyên nhân, và thứ hỏng lại bị ĐỆM nguyên một giờ.
+    if (!Array.isArray(jwks?.keys)) {
+      throw new PhoenixKeyError({
+        status: res.status,
+        code: "jwks_fetch_failed",
+        message: `JWKS tại ${url} trả 200 nhưng thân không có mảng 'keys'`,
+      });
+    }
     this.cachedJwks = { jwks, expiresAt: Date.now() + this.jwksCacheTtl };
     return jwks;
   }
