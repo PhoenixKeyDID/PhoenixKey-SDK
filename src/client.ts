@@ -14,7 +14,7 @@
  * ```
  */
 
-import { PhoenixKeyConfig } from "./types";
+import { PhoenixKeyConfig, SessionMeta, LinkedDevice } from "./types";
 import { AuthModule } from "./auth";
 import { SignRequestModule } from "./signRequest";
 import { IdentityModule } from "./identity";
@@ -32,6 +32,25 @@ import { OrgModule } from "./org";
 import { PoolModule } from "./pool";
 import { ResolverModule } from "./resolver";
 import * as session from "./session";
+
+/**
+ * `client.session.*` — same shape as the free `session` functions, minus
+ * `appId`: each instance's calls are pre-scoped to its own `config.appId`
+ * (see constructor), so two clients sharing a browser origin never read or
+ * clear each other's localStorage keys.
+ */
+type BoundSession = {
+  getSessionToken(): string | null;
+  setSession(token: string, userDid?: string): void;
+  clearSession(): void;
+  getSessionMeta(): SessionMeta | null;
+  isLoggedIn(): boolean;
+  getLinkedDevice(): LinkedDevice | null;
+  setLinkedDevice(token: string): void;
+  clearLinkedDevice(): void;
+  hasLinkedDevice(): boolean;
+  clearAll(): void;
+};
 
 export class PhoenixKeyClient {
   /** QR-pairing login + linked-device flow (spec §6). */
@@ -67,8 +86,8 @@ export class PhoenixKeyClient {
   /** Tra DID theo chuẩn W3C (interop) + bộ khoá công khai JWKS. */
   readonly resolver: ResolverModule;
 
-  /** localStorage helpers. */
-  readonly session: typeof session;
+  /** localStorage helpers, scoped to this instance's `appId`. */
+  readonly session: BoundSession;
 
   readonly config: Required<Omit<PhoenixKeyConfig, "apiKey">> & { apiKey?: string };
 
@@ -91,13 +110,29 @@ export class PhoenixKeyClient {
       apiKey: config.apiKey,
     };
 
-    this.session = session;
+    // Every session.* call below is curried with this instance's appId, so
+    // storage keys never collide with another PhoenixKeyClient on the same
+    // origin (see session.ts scopedKey / Registry-ba-cho-do-duoc §1).
+    const appId = this.config.appId;
+    const boundSession: BoundSession = {
+      getSessionToken: () => session.getSessionToken(appId),
+      setSession: (token, userDid) => session.setSession(token, userDid, appId),
+      clearSession: () => session.clearSession(appId),
+      getSessionMeta: () => session.getSessionMeta(appId),
+      isLoggedIn: () => session.isLoggedIn(appId),
+      getLinkedDevice: () => session.getLinkedDevice(appId),
+      setLinkedDevice: (token) => session.setLinkedDevice(token, appId),
+      clearLinkedDevice: () => session.clearLinkedDevice(appId),
+      hasLinkedDevice: () => session.hasLinkedDevice(appId),
+      clearAll: () => session.clearAll(appId),
+    };
+    this.session = boundSession;
 
     this.auth = new AuthModule(
       this.config.apiBaseUrl,
       this.config.sseBaseUrl,
       this.config.domain,
-      session.getLinkedDevice,
+      boundSession.getLinkedDevice,
     );
 
     this.signRequest = new SignRequestModule(
@@ -105,44 +140,44 @@ export class PhoenixKeyClient {
       this.config.sseBaseUrl,
       this.config.appId,
       this.config.domain,
-      session.getSessionToken,
+      boundSession.getSessionToken,
     );
 
     this.identity = new IdentityModule(
       this.config.apiBaseUrl,
-      session.getSessionToken,
+      boundSession.getSessionToken,
     );
 
     this.asset = new AssetModule(
       this.config.apiBaseUrl,
-      session.getSessionToken,
+      boundSession.getSessionToken,
     );
 
     this.activity = new ActivityModule(
       this.config.apiBaseUrl,
-      session.getSessionToken,
+      boundSession.getSessionToken,
     );
 
     this.seed = new SeedModule(
       this.config.apiBaseUrl,
-      session.getSessionToken,
+      boundSession.getSessionToken,
     );
 
     this.fees = new FeesModule(this.config.apiBaseUrl);
     this.network = new NetworkModule(this.config.apiBaseUrl);
     this.support = new SupportModule(this.config.apiBaseUrl);
-    this.wallet = new WalletModule(this.config.apiBaseUrl, session.getSessionToken);
+    this.wallet = new WalletModule(this.config.apiBaseUrl, boundSession.getSessionToken);
     this.wakeme = new WakemeModule(
       this.config.apiBaseUrl,
       this.config.sseBaseUrl,
-      session.getSessionToken,
+      boundSession.getSessionToken,
     );
-    this.devices = new DeviceModule(this.config.apiBaseUrl, session.getSessionToken);
+    this.devices = new DeviceModule(this.config.apiBaseUrl, boundSession.getSessionToken);
     this.guardians = new GuardianModule(
       this.config.apiBaseUrl,
-      session.getSessionToken,
+      boundSession.getSessionToken,
     );
-    this.org = new OrgModule(this.config.apiBaseUrl, session.getSessionToken);
+    this.org = new OrgModule(this.config.apiBaseUrl, boundSession.getSessionToken);
     // Hai module dưới chỉ đọc dữ liệu công khai — không nhận thẻ phiên, để
     // không có đường nào lỡ gắn thẻ vào một lượt gọi không cần thẻ.
     this.pool = new PoolModule(this.config.apiBaseUrl);
@@ -162,11 +197,11 @@ export class PhoenixKeyClient {
    * Use to guard routes before first API call.
    */
   isLoggedIn(): boolean {
-    return session.isLoggedIn();
+    return this.session.isLoggedIn();
   }
 
-  /** Clears all PhoenixKey data (session + linked device). */
+  /** Clears this instance's PhoenixKey data (session + linked device). */
   logout(): void {
-    session.clearAll();
+    this.session.clearAll();
   }
 }
