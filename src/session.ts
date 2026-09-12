@@ -11,7 +11,17 @@
  * don't read/overwrite each other's session — `logout()` on one no longer
  * wipes the other. `appId` is optional here only so this module stays
  * usable standalone; `PhoenixKeyClient` always supplies it (constructor
- * requires `config.appId` — see client.ts).
+ * requires `config.appId` — see client.ts). Omitting it does NOT fall back
+ * to the old shared key: it lands in the `DEFAULT_SCOPE` bucket, so an
+ * unsuffixed key in storage is always pre-upgrade data and nothing else.
+ *
+ * Upgrading from an unscoped version costs one re-login, because a legacy
+ * blob carries no record of which app wrote it — adopting it into a scope
+ * would be a coin flip that hands app A the session app B left behind,
+ * which is the very bug being fixed. `purgeLegacy()` therefore deletes
+ * those keys rather than migrating them; the client calls it on
+ * construction so a live 24h session token and a 30d linked-device token
+ * don't sit in `localStorage` forever with nothing left to clear them.
  */
 
 import { SessionMeta, LinkedDevice } from "./types";
@@ -24,8 +34,33 @@ function isBrowser(): boolean {
   return typeof window !== "undefined";
 }
 
+/**
+ * Bucket used when a caller drives this module directly without an `appId`.
+ * It is a real scope, not the bare base key — see the note on legacy keys in
+ * the module docblock. A client whose `appId` is literally `"default"` shares
+ * this bucket; on one origin that is the same app either way.
+ */
+const DEFAULT_SCOPE = "default";
+
+/** The three unsuffixed keys written by SDK versions before scoping. */
+const LEGACY_KEYS: readonly string[] = [
+  SESSION_KEY,
+  SESSION_META_KEY,
+  LINKED_DEVICE_KEY,
+];
+
 function scopedKey(base: string, appId?: string): string {
-  return appId ? `${base}:${appId}` : base;
+  return `${base}:${appId || DEFAULT_SCOPE}`;
+}
+
+/**
+ * Deletes the pre-scoping keys. Idempotent, SSR-safe, and called once per
+ * `PhoenixKeyClient` construction — the tokens they hold are still live, and
+ * after the upgrade no code path reads or clears them any more.
+ */
+export function purgeLegacy(): void {
+  if (!isBrowser()) return;
+  for (const key of LEGACY_KEYS) localStorage.removeItem(key);
 }
 
 function parseJwtExp(token: string): number | null {

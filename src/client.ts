@@ -14,7 +14,7 @@
  * ```
  */
 
-import { PhoenixKeyConfig, SessionMeta, LinkedDevice } from "./types";
+import { PhoenixKeyConfig } from "./types";
 import { AuthModule } from "./auth";
 import { SignRequestModule } from "./signRequest";
 import { IdentityModule } from "./identity";
@@ -38,19 +38,35 @@ import * as session from "./session";
  * `appId`: each instance's calls are pre-scoped to its own `config.appId`
  * (see constructor), so two clients sharing a browser origin never read or
  * clear each other's localStorage keys.
+ *
+ * Return types are read off the source functions so this can't drift from
+ * `session.ts`, and `_boundSessionIsComplete` below fails the build if a new
+ * export is added there and not surfaced here.
  */
 type BoundSession = {
-  getSessionToken(): string | null;
+  getSessionToken(): ReturnType<typeof session.getSessionToken>;
   setSession(token: string, userDid?: string): void;
   clearSession(): void;
-  getSessionMeta(): SessionMeta | null;
+  getSessionMeta(): ReturnType<typeof session.getSessionMeta>;
   isLoggedIn(): boolean;
-  getLinkedDevice(): LinkedDevice | null;
+  getLinkedDevice(): ReturnType<typeof session.getLinkedDevice>;
   setLinkedDevice(token: string): void;
   clearLinkedDevice(): void;
   hasLinkedDevice(): boolean;
   clearAll(): void;
 };
+
+// `purgeLegacy` is deliberately absent from the bound surface: it deletes the
+// pre-scoping keys, which belong to no app in particular, so binding it to one
+// instance's appId would misdescribe what it does. The constructor calls it.
+type UnboundSessionExports = Exclude<
+  keyof typeof session,
+  keyof BoundSession | "purgeLegacy"
+>;
+const _boundSessionIsComplete: [UnboundSessionExports] extends [never]
+  ? true
+  : never = true;
+void _boundSessionIsComplete;
 
 export class PhoenixKeyClient {
   /** QR-pairing login + linked-device flow (spec §6). */
@@ -110,9 +126,15 @@ export class PhoenixKeyClient {
       apiKey: config.apiKey,
     };
 
+    // Drop the pre-scoping keys before anything reads storage. They hold a
+    // still-live session token and linked-device token that no scoped code
+    // path would ever clear, and they cannot be adopted into a scope: a
+    // legacy blob carries no record of which app wrote it (see session.ts).
+    session.purgeLegacy();
+
     // Every session.* call below is curried with this instance's appId, so
     // storage keys never collide with another PhoenixKeyClient on the same
-    // origin (see session.ts scopedKey / Registry-ba-cho-do-duoc §1).
+    // origin (see scopedKey in session.ts).
     const appId = this.config.appId;
     const boundSession: BoundSession = {
       getSessionToken: () => session.getSessionToken(appId),

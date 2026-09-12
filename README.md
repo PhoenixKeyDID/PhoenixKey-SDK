@@ -76,6 +76,40 @@ if (phoenix.session.hasLinkedDevice()) {
 }
 ```
 
+### Session storage is scoped per `appId` (v0.6.1+)
+
+`localStorage` is per **origin**, not per app. Before v0.6.1 the SDK wrote three
+fixed keys, so two apps on one domain — two sub-apps of a portal, two
+environments on a staging host — overwrote each other's session: app A read the
+ticket app B had just written, showed data under B's identity, and signed under
+B's identity, with nothing reporting an error.
+
+Keys are now suffixed with `appId` (`phoenix_session_token:orilife-web-v1`).
+`PhoenixKeyClient` requires `appId` already, so **calling through the client
+needs no change** — `phoenix.session.*` is pre-scoped to that instance. Only
+code importing the free `session.*` functions directly passes the scope itself,
+as a trailing argument:
+
+```ts
+import { setSession, getSessionToken } from "@phoenixkeydid/phoenixkey-sdk";
+
+setSession(token, userDid, "orilife-web-v1");
+getSessionToken("orilife-web-v1");
+```
+
+Omitting it is still allowed (the module stays usable standalone) and lands in
+a `:default` bucket — it does **not** fall back to the old shared key.
+
+**Upgrading costs one re-login.** The old unsuffixed entries are deleted on the
+first `new PhoenixKeyClient(...)`, not migrated: a legacy blob carries no record
+of which app wrote it, so adopting it would be a coin flip that hands app A the
+session app B left behind — the very bug being fixed. Deleting also matters on
+its own, because those entries hold a live 24 h session token and a 30 d
+linked-device token that no scoped code path would ever clear again. The cost is
+capped by TTLs that already exist: it shortens one cycle, it does not introduce a
+new kind of interruption. Call `purgeLegacy()` yourself if you drive `session.*`
+without ever constructing a client.
+
 ---
 
 ## Step 3 — Request a signature (after login)
