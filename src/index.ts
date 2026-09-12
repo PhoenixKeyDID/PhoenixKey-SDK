@@ -155,6 +155,7 @@ export {
   clearLinkedDevice,
   hasLinkedDevice,
   clearAll,
+  purgeLegacy,
 } from "./session";
 
 // Types
