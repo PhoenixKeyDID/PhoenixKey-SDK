@@ -97,6 +97,44 @@ describe("WakemeModule — retired VND/Genie flow still answers on /activation",
   });
 });
 
+describe("wire keys match what the backend actually serialises", () => {
+  // The backend DTOs carry no @JsonNaming override, so Spring's global
+  // SNAKE_CASE applies. Jackson's SnakeCaseStrategy does NOT insert a
+  // separator between two consecutive capitals, so:
+  //     initialDLamp → initial_dlamp        currentDLamp → current_dlamp
+  // Checked against jackson-databind 2.17.2 by serialising copies of
+  // VaultStatusResponse / PotStatusResponse, not by reading the algorithm.
+  //
+  // These assertions are deliberately written so that renaming the property
+  // back to the underscored spelling is a *compile* error as well as a
+  // failing expectation — `tsc --noEmit` goes red before jest does.
+
+  it("vault status exposes initial_dlamp — the underscored spelling is not sent", async () => {
+    mockOk({ initial_dlamp: 1001, owned_lamp: 0, d_unit: 1_000_000 });
+    const v = await mod().getVaultStatus("did:phoenix:x:y");
+    expect(v.initial_dlamp).toBe(1001);
+    expect((v as unknown as Record<string, unknown>).initial_d_lamp).toBeUndefined();
+  });
+
+  it("pot status exposes current_dlamp — the underscored spelling is not sent", async () => {
+    mockOk({ current_dlamp: 500, d_cap: 1001 });
+    const p = await mod().getPotStatus();
+    expect(p.current_dlamp).toBe(500);
+    expect((p as unknown as Record<string, unknown>).current_d_lamp).toBeUndefined();
+  });
+
+  it("build response carries every required signer, not just the first", async () => {
+    mockOk({ required_signer_key_hashes: ["controller_pkh", "device_pkh"] });
+    const b = await mod().buildGetLamp({ wallet_address: "addr_test1abc" });
+    // GetLAMP needs both; signing only the first yields a chain-rejected tx
+    // whose error does not name the missing key (Issue #282).
+    expect(b.required_signer_key_hashes).toEqual(["controller_pkh", "device_pkh"]);
+    expect(
+      (b as unknown as Record<string, unknown>).required_signer_key_hash,
+    ).toBeUndefined();
+  });
+});
+
 describe("ActivationModule alias", () => {
   it("is the same class, not a wrapper", () => {
     expect(ActivationModule).toBe(WakemeModule);

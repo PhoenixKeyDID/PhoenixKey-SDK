@@ -221,13 +221,15 @@ Wakeme is one name for what used to be three: *Activation*, *GetLAMP* and
 ```ts
 // 1. how much would a new user get right now?
 const pot = await phoenix.wakeme.getPotStatus();
-// → { pot_balance_lamp: "…", current_d_lamp, d_cap, scale, saturated }
+// → { pot_balance_lamp: "…", current_dlamp, d_cap, scale, saturated }
+//   note: `current_dlamp`, not `current_d_lamp` — see the type's doc comment
 
 // 2. build the unsigned tx that moves D LAMP from the pot into the user's vault
 const build = await phoenix.wakeme.buildGetLamp({
   wallet_address: userWalletAddress,
 });
-// → { unsigned_tx_cbor, required_signer_key_hash, vault_address, d_lamp, … }
+// → { unsigned_tx_cbor, required_signer_key_hashes: […], vault_address, d_lamp, … }
+//   sign with EVERY hash in the array — GetLAMP needs two
 
 // 3. sign `unsigned_tx_cbor` in the Enclave, then hand it back
 const { cardano_tx_hash } = await phoenix.wakeme.submitGetLamp(signedCborHex);
