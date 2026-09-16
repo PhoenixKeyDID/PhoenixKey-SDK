@@ -181,7 +181,7 @@ describe("OrgModule — trường tuỳ chọn vắng hẳn khi không truyền"
   it("grantee_did / valid_ttl_seconds không xuất hiện nếu bên gọi bỏ trống", async () => {
     const f = mockOk({});
     await mod().issueLampGrant(ORG_DID, GRANT_PARAMS);
-    const keys = Object.keys(JSON.parse(String(f.mock.calls[0][1] as RequestInit).body ?? "{}"));
+    const keys = Object.keys(JSON.parse(String((f.mock.calls[0][1] as RequestInit).body ?? "{}")));
     expect(keys).not.toContain("grantee_did");
     expect(keys).not.toContain("valid_ttl_seconds");
   });

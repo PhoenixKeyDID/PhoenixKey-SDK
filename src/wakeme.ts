@@ -52,13 +52,36 @@ export type WakemeBuildRequest = {
 
 export type WakemeBuildResponse = {
   unsigned_tx_cbor: string;
-  required_signer_key_hash: string;
+  /**
+   * **Every** key the transaction requires, in the order the builder added
+   * them. GetLAMP needs **two**: `controller_pkh` then `device_pkh`.
+   *
+   * ⚠ Replaces the singular `required_signer_key_hash`, which carried only the
+   * first of the two. Signing with one key produces a transaction the chain
+   * rejects, and the rejection does not say which key is missing — nor can the
+   * client infer it, since a DID may have several authorised device keys and
+   * the server's preflight already picked one. The backend dropped the
+   * singular field outright rather than keep a wrong name beside a right one
+   * (Issue #282); an SDK type still promising it resolves to `undefined`.
+   */
+  required_signer_key_hashes: string[];
   vault_address: string;
   d_lamp: number;
   /** Smallest unit (oildrop) — JSON string, do not parse as a JS number. */
   d_oildrop: string;
   /** Pot total in LAMP — JSON string, do not parse as a JS number. */
   pot_balance_lamp: string;
+  /**
+   * The transaction's `validFrom` **slot** — a build-time bound on the
+   * unsigned transaction, nothing more.
+   *
+   * ⚠ Not to be confused with {@link WakemeVaultStatus.vest_start_ms}, which
+   * is the vault clock's zero point. They differ in **both** unit and origin
+   * (slots vs POSIX milliseconds; ~720 slot ↔ 720000 ms), so neither converts
+   * into the other by scaling. The near-identical names are the wire contract
+   * the backend already serves (`vestStartSlot` → `vest_start_slot`), so they
+   * are not renamed here — a one-sided rename would break every caller.
+   */
   vest_start_slot: number;
   phase1_days: number;
   ttl_slot: number;
@@ -82,6 +105,26 @@ export type WakemeActivityGate = {
   note: string | null;
 };
 
+/**
+ * Vault dashboard payload.
+ *
+ * ## ⚠ Two LAMP units live in this one object, and the field names do not
+ * separate them
+ *
+ * `conditional_lamp`, `owned_lamp`, `reclaimed_to_pot_lamp` and `d_unit` are
+ * all in **oildrop** (1 LAMP = 10⁶ oildrop) — they mirror the on-chain datum
+ * `WakemeVaultDatum`, which counts in oildrop throughout. `initial_dlamp` is
+ * in **whole LAMP** (≤ 1001).
+ *
+ * So the `_lamp` suffix here means "this is a LAMP quantity", *not* "this is
+ * denominated in whole LAMP". Formatting an oildrop figure as whole LAMP (or
+ * the reverse) is off by a factor of a million, raises no error, and still
+ * looks like a plausible number. The names are kept as-is because they are the
+ * wire contract the backend already serves — renaming them in the SDK alone
+ * would break every caller. Read the unit off this doc, never off the suffix.
+ *
+ * @see WakemeBuildResponse.d_oildrop — same unit, honest name.
+ */
 export type WakemeVaultStatus = {
   did: string;
   vault_address: string;
@@ -90,18 +133,54 @@ export type WakemeVaultStatus = {
   days_elapsed: number;
   phase1_days_total: number;
   days_to_phase2: number;
-  initial_d_lamp: number;
-  /** LAMP still locked — generates MAGIC, not yet owned by the user. */
+  /**
+   * Whole LAMP (capped at 1001), **not** oildrop — the `D` this vault was
+   * opened with.
+   *
+   * ⚠ The wire key is `initial_dlamp` — one word, no underscore between `d`
+   * and `lamp`. Jackson's `SnakeCaseStrategy` does not insert a separator
+   * between two consecutive capitals, so the backend field `initialDLamp`
+   * serialises to `initial_dlamp`, never `initial_d_lamp`. Reading the
+   * underscored spelling returns `undefined` and throws nothing.
+   */
+  initial_dlamp: number;
+  /**
+   * LAMP still locked — generates MAGIC, not yet owned by the user.
+   *
+   * **Unit: OILDROP** (1 LAMP = 10⁶ oildrop), despite the `_lamp` suffix.
+   * See the unit note above this type.
+   */
   conditional_lamp: number;
-  /** LAMP returned to the pot (daily anti-idle + Epochy forfeit). */
+  /**
+   * LAMP owned outright — together with `conditional_lamp` decides how much
+   * MAGIC the vault generates. Grows via the `OwnEpoch` redeemer, shrinks via
+   * `Redeem`; never forfeited.
+   *
+   * **Unit: OILDROP**, despite the `_lamp` suffix.
+   */
+  owned_lamp: number;
+  /**
+   * Nightly rate `D = WakemeUsageRight / 1001` — fixed per vault from genesis,
+   * invariant across every redeemer.
+   *
+   * **Unit: OILDROP.** No suffix says so; the sibling field `d_oildrop` on
+   * {@link WakemeBuildResponse} carries the same unit under an honest name.
+   */
+  d_unit: number;
+  /**
+   * LAMP returned to the pot (daily anti-idle + Epochy forfeit).
+   *
+   * **Unit: OILDROP**, despite the `_lamp` suffix. On-chain this is the datum
+   * field `reclaimed_to_pot` — the `_lamp` tail is added by the wire DTO only.
+   */
   reclaimed_to_pot_lamp: number;
-  vest_start_slot: number;
+  /**
+   * POSIX **milliseconds** at GetLAMP — the day/epoch clock's zero point.
+   * NOT a slot (Issue #256 renamed this from `vest_start_slot`).
+   */
+  vest_start_ms: number;
   magic_generated_total: string | null;
   magic_balance_current: string | null;
-  /** Phase 2 — LAMP unlocked to the owner. Null while in Daily. */
-  vested_unlocked: number | null;
-  /** Phase 2 audit counter only — forfeit is decided from `last_tick_epoch`. */
-  idle_epochs_p2: number | null;
   last_tick_day: number | null;
   last_tick_epoch: number | null;
   p2_epoch: number | null;
@@ -123,8 +202,16 @@ export type WakemeVaultMagic = {
 export type WakemePotStatus = {
   /** JSON string — the pot can exceed 2⁵³. */
   pot_balance_lamp: string;
-  /** D a new user would receive right now. */
-  current_d_lamp: number;
+  /**
+   * D a new user would receive right now — whole LAMP, capped at 1001.
+   *
+   * ⚠ The wire key is `current_dlamp` — one word, no underscore between `d`
+   * and `lamp`, for the same Jackson reason as
+   * {@link WakemeVaultStatus.initial_dlamp}. This is the "how much LAMP will I
+   * get" number a whole screen is built around, so reading it under the
+   * underscored spelling yields `undefined` with no error anywhere.
+   */
+  current_dlamp: number;
   d_cap: number;
   scale: number;
   saturated: boolean;

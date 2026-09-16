@@ -104,7 +104,10 @@ describe("createHandoffState", () => {
   it("không có crypto thì NÉM, không lặng lẽ hạ cấp", () => {
     const that = globalThis as { crypto?: Crypto };
     const real = that.crypto;
-    // @ts-expect-error — cố tình gỡ để dựng ca hỏng
+    // Cố tình gỡ để dựng ca hỏng. `delete` ở đây hợp lệ vì phép ép kiểu ngay
+    // trên đã khai `crypto` là tuỳ chọn — TS chỉ chặn `delete` trên thuộc tính
+    // BẮT BUỘC. Từng có `@ts-expect-error` ở dòng này chờ một lỗi không bao giờ
+    // xảy ra; nó sống sót được vì `test/**` chưa ai kiểm kiểu.
     delete that.crypto;
     try {
       expect(() => createHandoffState()).toThrow(/getRandomValues/);
