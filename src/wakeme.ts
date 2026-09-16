@@ -91,17 +91,28 @@ export type WakemeVaultStatus = {
   phase1_days_total: number;
   days_to_phase2: number;
   initial_d_lamp: number;
-  /** LAMP still locked — generates MAGIC, not yet owned by the user. */
+  /** LAMP still locked — generates MAGIC, not yet owned by the user. Oildrop. */
   conditional_lamp: number;
-  /** LAMP returned to the pot (daily anti-idle + Epochy forfeit). */
+  /**
+   * LAMP owned outright — together with `conditional_lamp` decides how much
+   * MAGIC the vault generates. Grows via the `OwnEpoch` redeemer, shrinks via
+   * `Redeem`; never forfeited. Oildrop.
+   */
+  owned_lamp: number;
+  /**
+   * Nightly rate `D = WakemeUsageRight / 1001`, oildrop — fixed per vault from
+   * genesis, invariant across every redeemer.
+   */
+  d_unit: number;
+  /** LAMP returned to the pot (daily anti-idle + Epochy forfeit). Oildrop. */
   reclaimed_to_pot_lamp: number;
-  vest_start_slot: number;
+  /**
+   * POSIX **milliseconds** at GetLAMP — the day/epoch clock's zero point.
+   * NOT a slot (Issue #256 renamed this from `vest_start_slot`).
+   */
+  vest_start_ms: number;
   magic_generated_total: string | null;
   magic_balance_current: string | null;
-  /** Phase 2 — LAMP unlocked to the owner. Null while in Daily. */
-  vested_unlocked: number | null;
-  /** Phase 2 audit counter only — forfeit is decided from `last_tick_epoch`. */
-  idle_epochs_p2: number | null;
   last_tick_day: number | null;
   last_tick_epoch: number | null;
   p2_epoch: number | null;
