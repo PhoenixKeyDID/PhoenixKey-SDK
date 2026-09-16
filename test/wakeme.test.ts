@@ -96,7 +96,11 @@ describe("WakemeModule — luồng VND/Genie đã bỏ: ném ngay, KHÔNG đi m�
   const RETIRED: Array<[string, (m: WakemeModule) => unknown]> = [
     ["initiate", (m) => m.initiate("addr_test1abc")],
     ["getStatus", (m) => m.getStatus("a-1")],
-    ["openEventStream", (m) => m.openEventStream("a-1", {})],
+    // Handler hợp lệ nhưng không bao giờ chạy: `openEventStream` ném ĐỒNG BỘ
+    // trước khi mở luồng. Truyền `{}` thì gọn hơn, nhưng `SseHandlers` đòi
+    // `onMessage`, nên `{}` là một bài kiểm không biên dịch được — nó chỉ xanh
+    // hồi `test/**` chưa ai kiểm kiểu.
+    ["openEventStream", (m) => m.openEventStream("a-1", { onMessage: () => {} })],
     ["cancel", (m) => m.cancel("a-1")],
     ["mockConfirmPayment", (m) => m.mockConfirmPayment("a-1", "admin")],
     ["submitTx", (m) => m.submitTx("a-1", "beef")],
