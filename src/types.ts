@@ -477,7 +477,10 @@ export type LinkedDevice = {
  * ```
  */
 export class PhoenixKeyError extends Error {
-  /** HTTP status code. 0 = network failure / abort. */
+  /**
+   * HTTP status code. `0` = KHÔNG có phản hồi HTTP nào — sự cố mạng, bị abort,
+   * hoặc SDK từ chối gửi (vd một luồng đã bỏ: `code: "flow_retired"`).
+   */
   status: number;
   /** Error code (mapped string từ backend integer code). */
   code: string;

@@ -115,6 +115,30 @@ export type {
   JwksKey,
 } from "./resolver";
 
+// SSO — bàn giao phiên đăng nhập cho trang web bên thứ ba.
+// Đây là nửa PHÍA BẠN của luồng: đẩy người dùng sang trang đăng nhập, rồi nhận
+// `app_token` về ở trang callback và gỡ nó khỏi thanh địa chỉ. Nửa kia
+// (`AppTokenVerifier`) nằm ở `@phoenixkeydid/phoenixkey-sdk/verifier` vì nó
+// chạy trên MÁY CHỦ của bạn, không phải trong trình duyệt.
+export {
+  buildLoginUrl,
+  createHandoffState,
+  readHandoff,
+  consumeHandoff,
+  stripHandoffFragment,
+  DEFAULT_LOGIN_URL,
+  FORBIDDEN_HANDOFF_KEYS,
+  HANDOFF_KEY_APP_TOKEN,
+  HANDOFF_KEY_USER_DID,
+  HANDOFF_KEY_STATE,
+  NONCE_MAX_LENGTH,
+} from "./sso";
+export type {
+  Handoff,
+  ReadHandoffOptions,
+  BuildLoginUrlParams,
+} from "./sso";
+
 // SSE primitive (advanced — for custom flows)
 export { ResilientSSE } from "./sse";
 export type { SseOptions } from "./sse";
@@ -131,6 +155,7 @@ export {
   clearLinkedDevice,
   hasLinkedDevice,
   clearAll,
+  purgeLegacy,
 } from "./session";
 
 // Types

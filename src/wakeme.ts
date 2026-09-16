@@ -39,7 +39,7 @@
 
 import { createFetcher, FetchOptions } from "./fetcher";
 import { ResilientSSE, SseOptions } from "./sse";
-import { SseHandlers } from "./types";
+import { PhoenixKeyError, SseHandlers } from "./types";
 
 // ─── Model A — GetLAMP into the vault ────────────────────────────────────────
 
@@ -421,51 +421,74 @@ export class WakemeModule {
   // — `/activation/initiate`, `/{id}/status`, `/{id}/events`, `/{id}/cancel`,
   // `/{id}/confirm-payment`, `/{id}/submit-tx` — không khớp handler nào ⇒ 404.
   //
-  // Nên gọi chúng là tiêu một lượt đi mạng để nhận 404, không phải là dùng một
-  // tính năng cũ. Chưa đổi thành ném lỗi ngay vì đó là quyết định về chính sách
-  // tương thích của thư viện công khai (bên nào còn ghim máy chủ bản cũ thì đổi
-  // là phá họ) — xem `PhoenixKey-SDK#9`.
+  // CHỐT (#9) — sáu phương thức này nay NÉM NGAY, không đi mạng.
+  //
+  // Chú thích cũ hoãn quyết định này với lý do "bên nào còn ghim máy chủ bản cũ
+  // thì đổi là phá họ". Em cân lại và lý do đó không đứng được:
+  //
+  //  • Với máy chủ HÔM NAY, người gọi ĐÃ nhận ngoại lệ rồi — `fetcher` ném
+  //    `PhoenixKeyError{status: 404, code: "http_404", message: "Not Found"}`
+  //    (fetcher.ts:170-190). Nên đây không phải "đang chạy được thì bị chặn".
+  //    Đổi chỉ làm cùng một thất bại xảy ra sớm hơn, không tiêu một lượt đi
+  //    mạng, và nói ĐÚNG nguyên nhân. Bốn trong sáu còn gọi `requireToken()`
+  //    trước, nên bên không có session nhận "thiếu session" — một lời chẩn
+  //    đoán sai về một luồng vốn đã không tồn tại.
+  //  • Bên còn ghim máy chủ bản cũ thì ghim luôn SDK bản cũ. Đó đúng là việc
+  //    ghim phiên bản dùng để làm. Giữ một đường 404 sống trong thư viện MỚI
+  //    để phục vụ một máy chủ CŨ là trả giá bằng mọi người còn lại.
+  //
+  // Phương thức được GIỮ (không xoá) nên mã người dùng vẫn biên dịch — đó là ý
+  // của "giữ alias một vòng release" trong #9. Thứ đổi là chúng thất bại sớm và
+  // nói rõ, thay vì thất bại muộn và nói sai. Vòng release sau thì xoá.
+  private static retired(method: string, replacement: string): PhoenixKeyError {
+    return new PhoenixKeyError({
+      // 0 = KHÔNG có phản hồi HTTP nào. Cố ý không dùng 410: không máy chủ nào
+      // nói "Gone" ở đây — lỗi này chưa từng rời khỏi máy khách, và dựng ra một
+      // mã trạng thái mà không ai gửi là để người đọc log đi tìm một phản hồi
+      // không tồn tại.
+      status: 0,
+      code: "flow_retired",
+      // defaultUserMessageKey(0) trả "errors.network" — SAI ở đây, đây không
+      // phải sự cố mạng. Truyền khoá riêng.
+      userMessageKey: "errors.flow_retired",
+      message:
+        `WakemeModule.${method}() thuộc luồng VND/Genie đã được gỡ khỏi ` +
+        `PhoenixKey-Database ngày 2026-09-03 (docs/VND-GENIE-REMOVAL.md). ` +
+        `Không còn handler nào phục vụ đường này ⇒ gọi tiếp chỉ nhận 404. ` +
+        `Dùng ${replacement}.`,
+      details: { retiredOn: "2026-09-03", replacement },
+    });
+  }
 
   /**
    * @deprecated Retired flow. Use {@link buildGetLamp}.
    *
    * Initiate the 200,000₫ activation package purchase through a Genie agent.
    */
-  async initiate(walletAddress: string): Promise<ActivationSession> {
-    return this.fetch<ActivationSession>("/activation/initiate", {
-      method: "POST",
-      body: JSON.stringify({ wallet_address: walletAddress }),
-      bearerToken: this.requireToken(),
-    } as FetchOptions);
+  async initiate(_walletAddress: string): Promise<ActivationSession> {
+    throw WakemeModule.retired("initiate", "buildGetLamp()");
   }
 
   /** @deprecated Retired flow. Use {@link getVaultStatus}. */
-  async getStatus(activationId: string): Promise<ActivationStatusResponse> {
-    return this.fetch<ActivationStatusResponse>(`/activation/${activationId}/status`);
+  async getStatus(_activationId: string): Promise<ActivationStatusResponse> {
+    throw WakemeModule.retired("getStatus", "getVaultStatus()");
   }
 
   /** @deprecated Retired flow. */
   openEventStream(
-    activationId: string,
-    handlers: SseHandlers<ActivationEventData>,
-    sseOpts?: Partial<SseOptions>,
+    _activationId: string,
+    _handlers: SseHandlers<ActivationEventData>,
+    _sseOpts?: Partial<SseOptions>,
   ): ResilientSSE<ActivationEventData> {
-    return new ResilientSSE<ActivationEventData>(
-      {
-        url: `/activation/${activationId}/events`,
-        sseBaseUrl: this.sseBaseUrl,
-        ...sseOpts,
-      },
-      handlers,
-    );
+    // Ném ĐỒNG BỘ, không trả về một ResilientSSE rồi để nó tự thất bại: một SSE
+    // trỏ vào đường 404 sẽ THỬ LẠI theo backoff, tức biến một tính năng đã bỏ
+    // thành một vòng lặp gọi mạng vô hạn im lặng.
+    throw WakemeModule.retired("openEventStream", "getVaultStatus()");
   }
 
   /** @deprecated Retired flow. */
-  async cancel(activationId: string): Promise<void> {
-    await this.fetch<void>(`/activation/${activationId}/cancel`, {
-      method: "POST",
-      bearerToken: this.requireToken(),
-    } as FetchOptions);
+  async cancel(_activationId: string): Promise<void> {
+    throw WakemeModule.retired("cancel", "— không có đường thay thế, luồng đã bỏ");
   }
 
   /**
@@ -476,27 +499,19 @@ export class WakemeModule {
    * null-gated, so a fake reference would mismatch its generated
    * `PK<8hex>+<6hex>` and 4xx the request.
    */
-  async mockConfirmPayment(activationId: string, adminToken: string): Promise<void> {
-    await this.fetch<void>(`/activation/${activationId}/confirm-payment`, {
-      method: "POST",
-      headers: { "X-Admin-Token": adminToken },
-      body: JSON.stringify({}),
-    } as FetchOptions);
+  async mockConfirmPayment(_activationId: string, _adminToken: string): Promise<void> {
+    throw WakemeModule.retired(
+      "mockConfirmPayment",
+      "— không có đường thay thế, luồng đã bỏ",
+    );
   }
 
   /** @deprecated Retired flow. Use {@link submitGetLamp}. */
   async submitTx(
-    activationId: string,
-    signedTxCbor: string,
+    _activationId: string,
+    _signedTxCbor: string,
   ): Promise<ActivationSubmitTxResponse> {
-    return this.fetch<ActivationSubmitTxResponse>(
-      `/activation/${activationId}/submit-tx`,
-      {
-        method: "POST",
-        body: JSON.stringify({ signed_tx_cbor: signedTxCbor }),
-        bearerToken: this.requireToken(),
-      } as FetchOptions,
-    );
+    throw WakemeModule.retired("submitTx", "submitGetLamp()");
   }
 }
 
