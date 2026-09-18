@@ -87,6 +87,7 @@ Cột trạng thái:
 | Danh sách OrgDID | `GET /identity/org` **không tồn tại**. Chỉ có tạo (`/identity/org/create`, `/identity/org/founding`, `/identity/org/{orgDid}/upgrade-authority`) | **MISSING** — client tự giữ danh sách |
 | **Claim LAMP theo ETD / Airdrop / SRCL** | không có route nào (`/airdrop-claim/...` trả 404). Cơ chế Merkle + tham số đợt phát thuộc **LAMP**, không phải PhoenixKey | **MISSING** — chờ chốt ranh giới với LAMP |
 | Tên người dùng, thiết bị, nhật ký, hỗ trợ | `POST /identity/username` · `GET /identity/by-username/{username}` · `GET /identity/nodes` · `POST /devices/register` · `GET /activity-logs` · `POST /support/session/init` · `POST /tx/estimate` | **READY** (`/tx/estimate` trả phí cố định 200.000 lovelace, chưa ước lượng thật) |
+| **Truy cập bằng eID quốc gia** | `GET /identity/access/methods` (danh mục phương thức xác thực **của hệ**) · `POST /identity/access/eid/begin` · `POST /identity/access/eid/complete`. Công khai, trần nhịp theo IP. Xem §"Đăng nhập bằng eID" bên dưới | **CHỜ MERGE** — Database [PR #335](https://github.com/PhoenixKeyDID/PhoenixKey-Database/pull/335). Client dựng được cả hai bước NGAY; bộ chuyển đổi eID thật nối sau, hợp đồng không đổi |
 | ⚠ Tàn dư mô hình cũ — **đừng nối vào** | `POST /wallet/magic/claim` luôn trả **410 Gone** (MAGIC không đúc, không claim). `POST /wakeme/getmagic/{quote,checkout}` + `GET /wakeme/getmagic/{orderId}` (bí danh cũ `/activation/getmagic/*`) là mua **CARP** bằng tiền pháp định — tên "GetMAGIC" là nhầm lẫn còn sót | **đang dọn** |
 
 ### ⚠ Quy ước đặt tên TRÊN DÂY — `snake_case`, không phải `camelCase`
@@ -219,6 +220,52 @@ Tổng cung LAMP = 3,6×10¹⁶ oildrop > `Number.MAX_SAFE_INTEGER` (9,007×10¹
 > kể từ đợt 2026-09-08 (trước đó mặc định trỏ gốc miền trần, tức đúng đường 404).
 
 > **On-chain (tham chiếu):** 2-of-2 `controller_pkh ∧ device_pkh` đã canonical trong validator (`auth_logic.ak`, 463 test PASS) nhưng CHƯA re-apply vào deploy artifact — anchor/ví đang live là bản 1-of-1 cũ. `did_payment`/`did_stake`/`limit_meter_vault`/`activation_vault` compile+test xanh, phần lớn BUILT chưa deploy. Chỉ TAAD có UTxO thật trên Preview.
+
+### Đăng nhập bằng eID quốc gia — hợp đồng cho integrator
+
+Ba cửa, tất cả **công khai** (người gọi chưa đăng nhập theo đúng định nghĩa) và tất cả có **trần nhịp theo IP**.
+
+**Luồng, và một ràng buộc lên phía client:**
+
+```
+1. Người dùng gõ khoá tra (số giấy tờ · số điện thoại · email · tên đăng nhập)
+   → client KHÔNG gọi máy chủ. Không có endpoint nào cho bước này.
+2. GET /identity/access/methods  → bày danh mục
+3. POST /identity/access/eid/begin  → mở authorization_url, giữ state
+4. POST /identity/access/eid/complete  → máy chủ mới trả lời có tài khoản hay không
+```
+
+**Bước 1 là ràng buộc, không phải gợi ý.** Một cửa "khoá này có tài khoản chưa" trả lời cho bất kỳ ai cầm một danh sách số căn cước — mà số căn cước Việt Nam 12 chữ số **có cấu trúc** (mã tỉnh · thế kỷ kèm giới · hai số năm sinh), nên biết tỉnh/giới/năm sinh của một mục tiêu thì chỉ còn khoảng `10⁶` ứng viên. Băm không cứu được chỗ này: ở cửa tra thì **chính máy chủ băm hộ người gọi**.
+
+```
+GET /identity/access/methods
+→ { "code": 1000, "result": { "methods": [
+      { "id": "device-biometric", "label_vi": "Sinh trắc trên thiết bị này",   "available": true },
+      { "id": "guardian",         "label_vi": "Người bảo hộ đã chọn trước",    "available": true },
+      { "id": "seed-phrase",      "label_vi": "Cụm 24 từ (nếu bạn đã tự lưu)", "available": true } ] } }
+```
+
+Danh sách **giống nhau cho mọi khoá tra**, kể cả khoá không ứng với tài khoản nào — chênh lệch giữa hai danh sách chính là cái bit mà bước 1 vừa giấu. Dòng `eid:<mã>` chỉ xuất hiện khi máy chủ đã khai một bộ chuyển đổi eID; **hôm nay chưa bản triển khai nào khai**, nên đáp trên có đúng ba dòng. Client phải dựng màn hình theo danh sách trả về, đừng gõ cứng bốn dòng.
+
+```
+POST /identity/access/eid/begin      { "provider": "vneid" }
+→ { "provider", "authorization_url", "state", "expires_in_seconds" }
+   503 (mã 2018) khi không có bộ chuyển đổi dùng được — gộp "chưa khai bộ nào" với "mã lạ"
+
+POST /identity/access/eid/complete   { "provider", "state", "assertion" }
+→ { "ticket", "expires_in_seconds", "next" }     next ∈ link-device | register
+   401 (mã 2019) cho MỌI ca hỏng — hết hạn · state không khớp · bộ chuyển đổi bác
+```
+
+**`ticket` KHÔNG phải `session_token`.** Nó là một **vé yếu tố**: bằng chứng rằng một lượt eID vừa thành công và nó trỏ tới tài khoản nào. Nó **không mở được endpoint nào**, và đừng gửi nó trong header `Authorization`.
+
+eID là **một** yếu tố. Tài khoản eID thì cơ quan nhà nước cấp lại được, còn DID thì không có nhánh xoá — nên eID một mình không đủ để giành quyền điều khiển một DID trên máy mới. Phép thử mà mọi thiết kế nối eID phải qua: *cơ quan cấp eID cấp lại tài khoản eID của một người — DID của họ ra sao?* Câu trả lời phải là **"không gì cả"**.
+
+**Hôm nay vé chưa có bên tiêu.** Nối vé vào luồng lập phiên (yếu tố thứ hai cạnh khoá thiết bị) và vào luồng khôi phục trên máy mới là đợt sau. Client dựng được cả bốn bước ngay và cắm bên tiêu sau — **hợp đồng bốn bước không đổi**, nên không phải làm lại cấu trúc màn.
+
+**Vì sao `next` phân biệt hai nhánh mà `/methods` thì không:** `/methods` chạy **trước** khi xác thực, nên một chênh lệch ở đó là một bit cho không. `complete` chạy **sau**, và người gọi vừa chứng minh được danh tính của chính chủ thể họ đang hỏi.
+
+**Luồng tự thoái lui êm:** người **chưa có** tài khoản chọn eID, xác thực xong, nhận `next: "register"` và được mời tạo mới — mà một lượt eID thành công chính là thứ cần để tạo. Họ không mất bước nào; họ chỉ không được nghe câu *"số này chưa đăng ký"* ở bước 1, và câu đó vốn không giúp họ làm gì.
 
 ## 3. Identity & Data compliance (§3)
 
