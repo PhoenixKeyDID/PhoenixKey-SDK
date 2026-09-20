@@ -20,8 +20,25 @@ pnpm-debug.log*
 
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
+
+# Khoá và bí mật — chặn theo đuôi, không theo tên, vì tên thì đặt kiểu gì cũng được
+*.pat
+*.pem
+*.key
+*.mnemonic
+
+# Ghi chép nội bộ của đội — KHÔNG được lên kho công khai này.
+# `_Agents/` chứa sổ làm việc, hộp thư, và danh sách định danh nội bộ dùng cho cổng
+# rà rò; tệp danh sách đó chính là bản liệt kê tên nội bộ đầy đủ nhất, nên lọt lên
+# origin/main thì nó là bản rò trọn vẹn hơn mọi thứ nó đang bảo vệ.
+# Trước đây chỗ này chỉ được chặn bởi `~/.config/git/ignore` toàn máy — tức máy khác
+# clone kho này thì không có lớp chặn nào. Kiểm bằng:
+#   git check-ignore -v _Agents/cong/ten-noi-bo.txt
+# Kết quả phải trỏ vào chính tệp này, không phải vào `~/.config`.
+_Agents/
+_wt-*/
+CLAUDE.md
 
 # Lock files (publish from clean state — npm pack will regenerate)
 package-lock.json
