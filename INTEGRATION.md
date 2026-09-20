@@ -341,9 +341,25 @@ Bài kiểm ghim cả ba: `test/sso.test.ts` (có bảng đột biến ở cuố
 Deploy tx: `b22bc2077bd3e91d306faa6324d70083701b7d0ebda43e40e1a6943a9dc16c5b` (verify Blockfrost hash-at-index).
 - `TAAD_ANCHOR_POLICY_ID` = `0f665f9967e5b735949e4def618b6b56cff9e18f0f74571303f49a3f`
 - `lamp_policy` (validator) = `f1884536db71ba734e94d4aa451376d45fa49c24f03caaf1e5165408`
-- **tLAMP token** (canonical cả Preview+Preprod, DÙNG cho hiển thị/chuyển LAMP) = `7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` — LƯU Ý KHÁC `lamp_policy`-validator (2 policy khác nhau).
+- **tLAMP token** — ⚠ **KHÔNG có một giá trị cố định trên testnet. Đừng gõ cứng giá trị nào ở đây vào mã của bạn.** Đọc kỹ ba đoạn dưới trước khi nối dây.
 
-Giao dịch minh hoạ khác: Wakeme 1001 tLAMP Preview `01139ba8af1f7556b70a82126aff7fd1b940bc8157c973b45e019e27c7870f16`.
+  Bản trước của dòng này ghi `7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` là *"canonical cả Preview+Preprod"*. **Câu đó nay sai ở cả hai mạng**, đo ngày 2026-09-20 đối chiếu sổ policy của nhà LAMP: bản ghi `preprod-native-sig-12param` và `preview-native-sig-12param` đều mang trạng thái `SUPERSEDED`. Nếu bạn đã chép giá trị đó, nó đang trỏ vào một đời token đã bị thay.
+
+  | mạng | policy id dùng được hôm nay | tên tài sản | ghi chú |
+  |---|---|---|---|
+  | Preprod | `8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd` | `744c414d50` | bản ghi `preprod-oneshot-14param`, `ACTIVE` — **sẽ bị thay**, xem đoạn dưới |
+  | Preview | **chưa có** | `744c414d50` | bản ghi `preview-oneshot-14param` còn `PENDING-MINT`, policy id còn rỗng ⇒ Preview **không có tLAMP dùng được**. Đừng dựng luồng LAMP trên Preview lúc này |
+  | Mainnet | bất biến, hỏi nhà LAMP | — | mainnet không xoay; chỉ testnet xoay |
+
+  **Vì sao vẫn đừng gõ cứng `8169b76c…`.** Nhà LAMP xác nhận 2026-09-20: đợt đổi nhãn bốn marker đi **cùng** đợt đúc cuối, và bốn nhãn là apply-param ⇒ đổi nhãn là đổi policy id. Nên `8169b76c…` sẽ thành `SUPERSEDED` khi đợt đó chạy, và **chưa có mốc ngày**. Ghim nó vào mã bây giờ là ghim hai lần. Hãy đọc policy id từ cấu hình lúc chạy, và lấy giá trị hiện hành từ sổ policy của nhà LAMP qua đầu mối tích hợp — sổ đó là nguồn duy nhất, dòng tài liệu này chỉ là bản chép và bản chép thì trôi.
+
+  **Hai cái bẫy đã cắn người thật, nêu để bạn khỏi cắn lại:**
+  - **So theo CẶP `(policy_id, asset_name)`, không bao giờ so theo tên.** Có ít nhất hai policy giả mang đúng tên tài sản `744c414d50` (`28e916b0…`, `3628b069…`). Lọc theo tên là nhặt đúng hàng giả.
+  - **`total_supply` của `7a1a7aed…` không phải một trần.** Bốn khe marker của đời đó neo bằng native-sig của ví deploy chứ không one-shot ⇒ người giữ khoá đúc lại được `SUPPLY NFT` lượt hai, dựng `SupplyState` mới với `dist_minted = 0` và đúc lại trọn cap, hợp lệ theo đúng validator. Con số cung của nó là một **ảnh chụp**, không phải một giới hạn.
+
+  LƯU Ý cuối, vẫn đúng như bản cũ: tLAMP token **khác** `lamp_policy`-validator ở dòng trên — hai policy khác nhau, đừng dùng lẫn.
+
+Giao dịch minh hoạ khác: Wakeme 1001 tLAMP Preview `01139ba8af1f7556b70a82126aff7fd1b940bc8157c973b45e019e27c7870f16` — ⚠ đây là **bản ghi lịch sử**, không phải đường đi lại được hôm nay: giao dịch đó tiêu đời tLAMP Preview nay đã `SUPERSEDED`, và đời thay nó còn chưa đúc (xem bảng ở §5). Đọc nó như bằng chứng luồng Wakeme từng chạy, đừng đọc như hướng dẫn dựng lại trên Preview.
 
 ## 6. Checklist tuân thủ (§8) — trạng thái PhoenixKey (silent)
 
