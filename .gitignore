@@ -20,8 +20,22 @@ pnpm-debug.log*
 
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
+
+# Khoá và bí mật — chặn theo đuôi, không theo tên, vì tên thì đặt kiểu gì cũng được
+*.pat
+*.pem
+*.key
+*.mnemonic
+
+# Ghi chép làm việc nội bộ của đội — không thuộc kho này.
+# Trước đây chỗ này chỉ được chặn bởi tệp bỏ-qua toàn máy của một người, nên máy
+# khác clone kho thì không có lớp chặn nào. Kiểm bằng:
+#   git check-ignore -v _Agents/ghi-chu.txt
+# Kết quả phải trỏ vào chính tệp này, không phải vào `~/.config`.
+_Agents/
+_wt-*/
+CLAUDE.md
 
 # Lock files (publish from clean state — npm pack will regenerate)
 package-lock.json
