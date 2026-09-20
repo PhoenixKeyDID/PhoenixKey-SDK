@@ -62,6 +62,8 @@ function mockFetchOnce(body: unknown, status = 200) {
   );
 }
 
+const AUD = "did:phoenix:svc:orilife";
+
 describe("AppTokenVerifier — verify() only trusts claims after signature check", () => {
   const privateKey = ed25519.utils.randomSecretKey();
   const publicKey = ed25519.getPublicKey(privateKey);
@@ -75,7 +77,7 @@ describe("AppTokenVerifier — verify() only trusts claims after signature check
     const token = makeSignedToken(privateKey);
     const verifier = new AppTokenVerifier();
 
-    const claims = await verifier.verify(token);
+    const claims = await verifier.verify(token, AUD);
 
     expect(claims.sub).toBe("did:phoenix:0:abc123");
     expect(claims.aud).toBe("did:phoenix:svc:orilife");
@@ -90,7 +92,7 @@ describe("AppTokenVerifier — verify() only trusts claims after signature check
     });
     const verifier = new AppTokenVerifier();
 
-    const claims = await verifier.verify(token);
+    const claims = await verifier.verify(token, AUD);
     expect(claims.key_role).toBe("viewer");
   });
 
@@ -114,10 +116,10 @@ describe("AppTokenVerifier — verify() only trusts claims after signature check
     const forgedToken = `${headerB64}.${forgedPayload}.${sigB64}`;
 
     const verifier = new AppTokenVerifier();
-    await expect(verifier.verify(forgedToken)).rejects.toMatchObject({
+    await expect(verifier.verify(forgedToken, AUD)).rejects.toMatchObject({
       code: "signature_invalid",
     });
-    await expect(verifier.verify(forgedToken)).rejects.toBeInstanceOf(PhoenixKeyError);
+    await expect(verifier.verify(forgedToken, AUD)).rejects.toBeInstanceOf(PhoenixKeyError);
   });
 
   it("REJECTS a token signed by a different keypair than the one published in JWKS", async () => {
@@ -126,7 +128,7 @@ describe("AppTokenVerifier — verify() only trusts claims after signature check
     const tokenFromWrongKey = makeSignedToken(otherPrivateKey);
 
     const verifier = new AppTokenVerifier();
-    await expect(verifier.verify(tokenFromWrongKey)).rejects.toMatchObject({
+    await expect(verifier.verify(tokenFromWrongKey, AUD)).rejects.toMatchObject({
       code: "signature_invalid",
     });
   });
@@ -140,7 +142,7 @@ describe("AppTokenVerifier — verify() only trusts claims after signature check
     });
 
     const verifier = new AppTokenVerifier();
-    await expect(verifier.verify(token)).rejects.toMatchObject({ code: "token_expired" });
+    await expect(verifier.verify(token, AUD)).rejects.toMatchObject({ code: "token_expired" });
   });
 
   it("REJECTS a token minted for a different aud when expectedAud is given", async () => {
@@ -156,7 +158,7 @@ describe("AppTokenVerifier — verify() only trusts claims after signature check
   it("REJECTS a malformed token (wrong segment count) before ever hitting the network", async () => {
     const fetchSpy = mockFetchOnce(jwksResponse(publicKey));
     const verifier = new AppTokenVerifier();
-    await expect(verifier.verify("not-a-jwt")).rejects.toMatchObject({
+    await expect(verifier.verify("not-a-jwt", AUD)).rejects.toMatchObject({
       code: "malformed_token",
     });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -166,7 +168,46 @@ describe("AppTokenVerifier — verify() only trusts claims after signature check
     mockFetchOnce(jwksResponse(publicKey, "some-other-kid"));
     const token = makeSignedToken(privateKey);
     const verifier = new AppTokenVerifier();
-    await expect(verifier.verify(token)).rejects.toMatchObject({
+    await expect(verifier.verify(token, AUD)).rejects.toMatchObject({
+      code: "jwks_key_not_found",
+    });
+  });
+
+  // ── Gate 3: the audience check cannot be skipped by forgetting an argument.
+  // Every test above had to be edited to pass AUD when this gate landed — the
+  // old signature let twelve of this repo's own tests run with the gate off
+  // without a single warning, which is exactly how an integrator gets there. ──
+  it("REJECTS a call that omits expectedAud — before any network or parsing work", async () => {
+    const fetchSpy = mockFetchOnce(jwksResponse(publicKey));
+    const verifier = new AppTokenVerifier();
+    // @ts-expect-error — the point of this test is the JavaScript caller who
+    // has no compiler telling them the argument is required.
+    await expect(verifier.verify(makeSignedToken(privateKey))).rejects.toMatchObject({
+      code: "expected_aud_required",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("REJECTS an empty-string expectedAud — an empty config value is not a pass", async () => {
+    const verifier = new AppTokenVerifier();
+    await expect(verifier.verify(makeSignedToken(privateKey), "")).rejects.toMatchObject({
+      code: "expected_aud_required",
+    });
+  });
+
+  it("verifyWithoutAudience() accepts a token minted for ANY aud — the deliberate opt-out works", async () => {
+    mockFetchOnce(jwksResponse(publicKey));
+    const token = makeSignedToken(privateKey, {
+      payload: { aud: "did:phoenix:svc:somebody-else" },
+    });
+    const claims = await new AppTokenVerifier().verifyWithoutAudience(token);
+    expect(claims.aud).toBe("did:phoenix:svc:somebody-else");
+  });
+
+  it("REJECTS a token whose header carries no kid — no falling back to keys[0]", async () => {
+    mockFetchOnce(jwksResponse(publicKey));
+    const token = makeSignedToken(privateKey, { header: { kid: undefined } });
+    await expect(new AppTokenVerifier().verify(token, AUD)).rejects.toMatchObject({
       code: "jwks_key_not_found",
     });
   });
@@ -174,8 +215,8 @@ describe("AppTokenVerifier — verify() only trusts claims after signature check
   it("caches JWKS across calls (does not re-fetch within TTL)", async () => {
     const fetchSpy = mockFetchOnce(jwksResponse(publicKey));
     const verifier = new AppTokenVerifier();
-    await verifier.verify(makeSignedToken(privateKey));
-    await verifier.verify(makeSignedToken(privateKey));
+    await verifier.verify(makeSignedToken(privateKey), AUD);
+    await verifier.verify(makeSignedToken(privateKey), AUD);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });

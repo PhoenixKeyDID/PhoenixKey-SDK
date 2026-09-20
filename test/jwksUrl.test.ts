@@ -41,7 +41,7 @@ async function fetchedUrls(v: AppTokenVerifier, token: string): Promise<string[]
     } as unknown as Response;
   };
   try {
-    await v.verify(token).catch(() => undefined);
+    await v.verify(token, "did:phoenix:svc:test").catch(() => undefined);
   } finally {
     (globalThis as { fetch: unknown }).fetch = real;
   }
@@ -94,7 +94,7 @@ describe("JWKS hỏng thì phải nói ra chỗ sửa", () => {
     (globalThis as { fetch: unknown }).fetch = async () =>
       ({ ok: status < 400, status, json: async () => body }) as unknown as Response;
     try {
-      await new AppTokenVerifier().verify(tokenEdDSA());
+      await new AppTokenVerifier().verify(tokenEdDSA(), "did:phoenix:svc:test");
       throw new Error("đáng lẽ phải ném");
     } catch (e) {
       return e as Error;

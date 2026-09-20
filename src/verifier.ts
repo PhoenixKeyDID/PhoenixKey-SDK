@@ -440,15 +440,55 @@ export class AppTokenVerifier {
   }
 
   /**
-   * Verify `token`'s signature + expiry (and `aud`, if given), then return
-   * its claims. Throws `PhoenixKeyError` on any failure — malformed token,
+   * Verify `token`'s signature, expiry **and `aud`**, then return its claims.
+   * Throws `PhoenixKeyError` on any failure — malformed token, missing or
    * unknown `kid`, bad signature, expired, or `aud` mismatch. Never returns
    * claims for a token that failed verification.
    *
+   * `expectedAud` is REQUIRED. It used to be optional, and that was a
+   * dangerous default: a caller who wrote `verify(token)` type-checked fine,
+   * got no warning, and silently ran with the audience gate switched off. A
+   * token is minted for ONE service — without this check, service B accepts a
+   * token minted for service A and logs the attacker in as A's user. Pass your
+   * own ServiceDID here; it is the only value that makes this token yours.
+   *
+   * If you genuinely cannot bind an audience, call
+   * {@link verifyWithoutAudience} instead — so that the choice is visible at
+   * the call site and in review, rather than hidden in an omitted argument.
+   *
    * @param token        the `app_token` string (3-segment JWT)
-   * @param expectedAud  if given, reject tokens minted for a different `aud`
+   * @param expectedAud  your ServiceDID — tokens minted for any other `aud`
+   *                     are rejected
    */
-  async verify(token: string, expectedAud?: string): Promise<AppTokenClaims> {
+  async verify(token: string, expectedAud: string): Promise<AppTokenClaims> {
+    // Runtime guard, not just a type: this package ships to plain JavaScript
+    // callers too, where the compiler never runs and `verify(token)` would
+    // otherwise sail straight through with the gate off.
+    if (typeof expectedAud !== "string" || expectedAud.length === 0) {
+      throw new PhoenixKeyError({
+        status: 0,
+        code: "expected_aud_required",
+        message:
+          "verify() requires expectedAud (your ServiceDID). To skip the audience check deliberately, call verifyWithoutAudience().",
+      });
+    }
+    return this.verifyInternal(token, expectedAud);
+  }
+
+  /**
+   * Verify signature + expiry but **not** `aud`. Only correct when the caller
+   * has some other binding that ties the token to itself; otherwise any token
+   * minted for any service is accepted, including one obtained by luring the
+   * user into signing in to an attacker's service.
+   *
+   * Named so the omission is legible: a reader of the call site can see the
+   * audience check is off without opening this file.
+   */
+  async verifyWithoutAudience(token: string): Promise<AppTokenClaims> {
+    return this.verifyInternal(token, undefined);
+  }
+
+  private async verifyInternal(token: string, expectedAud?: string): Promise<AppTokenClaims> {
     const { header, payload, signingInput, signature } = splitToken(token);
 
     if (header.alg !== "EdDSA") {
@@ -521,7 +561,21 @@ export class AppTokenVerifier {
 
   private async resolvePubkey(kid: string | undefined): Promise<Uint8Array> {
     const jwks = await this.getJwks();
-    const key = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
+    // `kid` is required. The old fallback to `keys[0]` meant a token carrying
+    // no `kid` was checked against whichever key happened to come first in a
+    // JSON array served by the API — so the outcome depended on the server's
+    // response ordering rather than on the token. Today the JWKS holds one
+    // key and the two behaviours coincide; the first signing-key rotation
+    // puts a second key in that array and they stop coinciding, silently.
+    // Every token this verifier accepts (alg=EdDSA) is minted with a `kid`.
+    if (!kid) {
+      throw new PhoenixKeyError({
+        status: 0,
+        code: "jwks_key_not_found",
+        message: "app_token header is missing kid — cannot select a JWKS key",
+      });
+    }
+    const key = jwks.keys.find((k) => k.kid === kid);
     if (!key) {
       throw new PhoenixKeyError({
         status: 0,
