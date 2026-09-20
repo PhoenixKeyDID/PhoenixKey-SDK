@@ -198,7 +198,9 @@ Tổng cung LAMP = 3,6×10¹⁶ oildrop > `Number.MAX_SAFE_INTEGER` (9,007×10¹
 >      Swagger  https://api.phoenixkey.me/api/v1/swagger-ui.html
 > ```
 >
-> **✅ Cấu hình prod đã nạp** (kiểm 2026-08-04 bằng `curl`): `/health/cardano` trả đủ `lamp_policy_id` = `5e83cd3e9c9e66dc989e64626dde2aa23be552f8a08485398137352a`, `taad_script_hash` = `f8d8bb57ff472d1c7269ec00a31444bfae82c5d045977787e4c589b9`, `taad_script_address` = `addr_test1wrud3w6hlarj68rjd8kqpgc5gjl6aqk96pzewau8unzcnwg8sn0ql`, `taad_script_cbor_hex` (19548 ký tự), và `taad_script_hash_history` (2 hash cũ). Client đối chiếu **policy-id** fail-closed nay hoạt động được — trước đây trường rỗng làm LAMP thật cũng bị chặn.
+> ⚠ **Số đo 2026-08-04, CHƯA đo lại — và giá trị `lamp_policy_id` bên dưới nay đã bị tuyên chết.** `5e83cd3e…` là `lamp_policy` V1: `mint_authorized` mở nhánh burn cho bất kỳ ai, trái bất biến "LAMP cố định 36 tỷ, KHÔNG burn", nên nó nằm trong danh sách cấm của đường deploy. Nếu `/health/cardano` hôm nay còn trả giá trị đó thì đó là **lỗi cấu hình đang chạy**, không phải một giá trị dùng được — số dư LAMP đọc qua nó sẽ luôn ra 0, im lặng. Đo lại trước khi tin: `curl -s <host>/api/v1/health/cardano`. Đừng lấy `lamp_policy_id` từ đây làm policy của **token** — xem §5, hai thứ khác nhau.
+>
+> Nguyên văn số đo cũ, giữ để tra: `/health/cardano` trả đủ `lamp_policy_id` = `5e83cd3e9c9e66dc989e64626dde2aa23be552f8a08485398137352a`, `taad_script_hash` = `f8d8bb57ff472d1c7269ec00a31444bfae82c5d045977787e4c589b9`, `taad_script_address` = `addr_test1wrud3w6hlarj68rjd8kqpgc5gjl6aqk96pzewau8unzcnwg8sn0ql`, `taad_script_cbor_hex` (19548 ký tự), và `taad_script_hash_history` (2 hash cũ). Client đối chiếu **policy-id** fail-closed nay hoạt động được — trước đây trường rỗng làm LAMP thật cũng bị chặn.
 >
 > `magic_policy_id` rỗng là **đúng theo thiết kế** — MAGIC là tài khoản trong vault, không có policy-id. Client KHÔNG được coi trường rỗng này là lỗi cấu hình.
 >
@@ -336,30 +338,67 @@ const claims = await new AppTokenVerifier().verify(appToken, MY_SERVICE_DID);
 Bài kiểm ghim cả ba: `test/sso.test.ts` (có bảng đột biến ở cuối tệp). Bước 4 dùng
 đúng `AppTokenVerifier` nói ở §4.1 bên trên.
 
-## 5. Anchor on-chain đã deploy (bằng chứng — Preprod)
+## 5. Anchor on-chain đã deploy, và định danh token theo mạng
 
 Deploy tx: `b22bc2077bd3e91d306faa6324d70083701b7d0ebda43e40e1a6943a9dc16c5b` (verify Blockfrost hash-at-index).
 - `TAAD_ANCHOR_POLICY_ID` = `0f665f9967e5b735949e4def618b6b56cff9e18f0f74571303f49a3f`
-- `lamp_policy` (validator) = `f1884536db71ba734e94d4aa451376d45fa49c24f03caaf1e5165408`
-- **tLAMP token** — ⚠ **KHÔNG có một giá trị cố định trên testnet. Đừng gõ cứng giá trị nào ở đây vào mã của bạn.** Đọc kỹ ba đoạn dưới trước khi nối dây.
+- ⛔ `lamp_policy` (validator) = ~~`f1884536db71ba734e94d4aa451376d45fa49c24f03caaf1e5165408`~~ — **ĐÃ CHẾT, đừng dùng.** Dòng này từng ghi kèm chữ "(không đổi)" và chữ đó sai từ commit `82e9dcf` (2026-07-16). Đời kế của nó (`5e83cd3e…`) **cũng chết và bị cấm**: `mint_authorized` mở nhánh burn cho bất kỳ ai, trái bất biến "LAMP cố định 36 tỷ, KHÔNG burn" — nên cả module `lamp_policy` đã ra khỏi đường deploy từ 2026-09-14. Ai còn ghim một trong hai giá trị này sẽ đọc ra số dư 0 hoặc dựng giao dịch cho một tài sản không tồn tại — **hỏng dưới dạng "không thấy tiền", không phải dưới dạng lỗi**, nên không ai được cảnh báo. ⚠ Tên biến `LAMP_POLICY_ID` trong các tệp cấu hình mẫu trỏ tới **policy của TOKEN** (mục dưới), không phải hash validator này — hai thứ khác nhau mang tên gần giống.
+- **tLAMP / LAMP token** — ⚠ **Không mạng nào ở đây cho bạn một giá trị vĩnh viễn, kể cả mainnet.** Đọc hết mục này trước khi viết dòng mã đầu tiên.
 
-  Bản trước của dòng này ghi `7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` là *"canonical cả Preview+Preprod"*. **Câu đó nay sai ở cả hai mạng**, đo ngày 2026-09-20 đối chiếu sổ policy của nhà LAMP: bản ghi `preprod-native-sig-12param` và `preview-native-sig-12param` đều mang trạng thái `SUPERSEDED`. Nếu bạn đã chép giá trị đó, nó đang trỏ vào một đời token đã bị thay.
+  Bản trước của dòng này ghi `7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` là *"canonical cả Preview+Preprod"*. **Câu đó sai ở cả hai mạng.** Đối chiếu sổ policy — kho công khai, ai cũng mở được: [`lampPolicies.ts:127`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L127) và [`:235`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L235) đều ghi `status: "SUPERSEDED"`. Nếu bạn đã chép giá trị đó, nó đang trỏ vào một đời token đã bị thay.
 
-  | mạng | policy id dùng được hôm nay | tên tài sản | ghi chú |
+  ### Nguồn quyền uy — dùng cái này, đừng dùng bảng dưới
+
+  Sổ policy là **nguồn duy nhất**. Nó công khai, đọc được không cần tài khoản:
+
+  - Kho: [`MagicLampEco/LAMP`](https://github.com/MagicLampEco/LAMP) · tệp [`Genesis/offchain/src/lampPolicies.ts`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts)
+  - Hàm cần gọi: `activeLampPolicyId(network)` — nó **ném** nếu mạng đó chưa có bản `ACTIVE`, thay vì trả một giá trị trông hợp lệ.
+  - Đối chiếu nhanh không cần clone:
+    ```bash
+    curl -s https://raw.githubusercontent.com/MagicLampEco/LAMP/main/Genesis/offchain/src/lampPolicies.ts | grep -n 'policyId\|status'
+    ```
+
+  Bảng dưới là **bản chép**, đo tại commit [`1ef32ee0`](https://github.com/MagicLampEco/LAMP/commit/1ef32ee0b168147781ef01dfd68cb1a01cf32623) ngày 2026-09-20. Bản chép thì trôi — nếu nó lệch với sổ, **sổ đúng**.
+
+  | mạng | policy id | tên tài sản | trạng thái |
   |---|---|---|---|
-  | Preprod | `8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd` | `744c414d50` | bản ghi `preprod-oneshot-14param`, `ACTIVE` — **sẽ bị thay**, xem đoạn dưới |
-  | Preview | **chưa có** | `744c414d50` | bản ghi `preview-oneshot-14param` còn `PENDING-MINT`, policy id còn rỗng ⇒ Preview **không có tLAMP dùng được**. Đừng dựng luồng LAMP trên Preview lúc này |
-  | Mainnet | bất biến, hỏi nhà LAMP | — | mainnet không xoay; chỉ testnet xoay |
+  | Preprod | `8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd` | `744c414d50` | [`ACTIVE`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L184) — **tạm thời**, xem dưới |
+  | Preview | `7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` | `744c414d50` | [`SUPERSEDED`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L235) — đời thay còn [`PENDING-MINT`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L258) |
+  | Mainnet | `55d3e01bb6c469e02665e4b6573ce65bbaf7a50ad2024e247eb180f0` | **`4c414d50`** ⚠ khác testnet | `ACTIVE` — nhưng là [**bản MỒI sẽ bị thay**](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L116) |
 
-  **Vì sao vẫn đừng gõ cứng `8169b76c…`.** Nhà LAMP xác nhận 2026-09-20: đợt đổi nhãn bốn marker đi **cùng** đợt đúc cuối, và bốn nhãn là apply-param ⇒ đổi nhãn là đổi policy id. Nên `8169b76c…` sẽ thành `SUPERSEDED` khi đợt đó chạy, và **chưa có mốc ngày**. Ghim nó vào mã bây giờ là ghim hai lần. Hãy đọc policy id từ cấu hình lúc chạy, và lấy giá trị hiện hành từ sổ policy của nhà LAMP qua đầu mối tích hợp — sổ đó là nguồn duy nhất, dòng tài liệu này chỉ là bản chép và bản chép thì trôi.
+  ⚠ **`ACTIVE` ở đây KHÔNG nghĩa là ổn định.** Nó chỉ nghĩa là "bản đang dùng của mạng này, hôm nay". Preprod đã đi qua **ba** đời policy id và hai đời đầu đều đã `SUPERSEDED`. Và bản ghi mainnet tự khai nguyên văn: *"Bản MỒI. Sẽ bị thay bởi policy uỷ quyền OrgDID — policy id SẼ KHÁC. Đừng nhúng cứng."* Không có mạng nào miễn trừ.
 
-  **Hai cái bẫy đã cắn người thật, nêu để bạn khỏi cắn lại:**
-  - **So theo CẶP `(policy_id, asset_name)`, không bao giờ so theo tên.** Có ít nhất hai policy giả mang đúng tên tài sản `744c414d50` (`28e916b0…`, `3628b069…`). Lọc theo tên là nhặt đúng hàng giả.
-  - **`total_supply` của `7a1a7aed…` không phải một trần.** Bốn khe marker của đời đó neo bằng native-sig của ví deploy chứ không one-shot ⇒ người giữ khoá đúc lại được `SUPPLY NFT` lượt hai, dựng `SupplyState` mới với `dist_minted = 0` và đúc lại trọn cap, hợp lệ theo đúng validator. Con số cung của nó là một **ảnh chụp**, không phải một giới hạn.
+  ### ĐỌC thì được, NƯỚNG thì không — phân biệt này quyết định bạn có mất tiền hay không
 
-  LƯU Ý cuối, vẫn đúng như bản cũ: tLAMP token **khác** `lamp_policy`-validator ở dòng trên — hai policy khác nhau, đừng dùng lẫn.
+  Hai cách dùng một policy id, hậu quả khác nhau hoàn toàn:
 
-Giao dịch minh hoạ khác: Wakeme 1001 tLAMP Preview `01139ba8af1f7556b70a82126aff7fd1b940bc8157c973b45e019e27c7870f16` — ⚠ đây là **bản ghi lịch sử**, không phải đường đi lại được hôm nay: giao dịch đó tiêu đời tLAMP Preview nay đã `SUPERSEDED`, và đời thay nó còn chưa đúc (xem bảng ở §5). Đọc nó như bằng chứng luồng Wakeme từng chạy, đừng đọc như hướng dẫn dựng lại trên Preview.
+  - **ĐỌC** (lọc số dư, dựng tx chuyển) — đọc từ cấu hình lúc chạy. Policy đổi thì bạn sửa một biến môi trường và xong.
+  - **NƯỚNG vào apply-param** của một validator (escrow, vault, khoá LAMP) — giá trị đi thẳng vào **script hash**, tức vào **địa chỉ**. Policy đổi thì địa chỉ đã tạo đóng băng: **không đường di trú tự động, không dòng lỗi nào lúc deploy**. Và LAMP **không burn** — tài sản rót vào một policy không ai giữ thì không ai lấy lại được.
+
+  Đọc policy id từ biến môi trường rồi truyền chính biến đó vào `applyParamsToScript` **không phải là tuân thủ** — giá trị vẫn bị đông cứng. Nếu thiết kế của bạn cần nướng, hãy nướng một giá trị mà bạn kiểm soát vòng đời, đừng nướng giá trị này.
+
+  ### Bốn bước lọc tài sản — thiếu bước nào cũng nhận nhầm
+
+  Không có "token LAMP" theo tên. Chỉ có **đúng một cặp** được nhận, mỗi mạng một cặp:
+
+  1. **Ghép trọn `unit`.** Blockfrost/Koios trả `unit = policy_id ‖ asset_name` **nối liền**, không tách hai trường. So trọn chuỗi đó. Đừng dùng `endsWith(assetName)` — nó khớp mọi policy.
+  2. **Dùng hex, không dùng tên hiển thị.** `744c414d50` là hex của `tLAMP`, `4c414d50` là hex của `LAMP`. Nhiều API trả kèm trường tên đã giải mã — đừng so với trường đó.
+  3. **Chuẩn hoá** `trim().toLowerCase()` cả hai vế trước khi so.
+  4. **Fail-closed khi cấu hình rỗng.** `policyId ?? ""` ghép với asset name ra một `unit` trông hợp lệ và khớp nhầm. Thiếu biến thì **dừng và báo lỗi**, đừng chạy tiếp với chuỗi rỗng.
+
+  Áp cả bốn bước cho **đầu ra** nữa — địa chỉ nhận và tiền thừa của tx bạn dựng — không chỉ cho bộ lọc đầu vào.
+
+  Đây là **danh sách trắng một phần tử**, không phải danh sách đen. Đừng viết `if (biếtLàGiả) reject` — đúc một token trùng tên tốn khoảng 2 ADA và không cần quyền gì, nên tập cần chặn là vô hạn còn tập được nhận thì đúng một.
+
+  ### Ba điều dễ hiểu nhầm
+
+  - **Một policy id có thể xuất hiện trên hai mạng cùng lúc.** `7a1a7aed…` nằm ở cả Preview lẫn Preprod. Lý do: policy đó được dẫn ra từ chữ ký của ví triển khai, mà cùng một ví thì ký ở mạng nào cũng cho cùng kết quả. Hệ quả cho bạn: **policy id không phải là dấu hiệu phân biệt mạng**. Nếu đồ gá kiểm thử của bạn dựa vào nó để biết đang ở mạng nào, nó sẽ chạy chéo mạng mà không có gì báo.
+  - **Token Preview bạn lấy từ faucet thuộc đời `SUPERSEDED`, và nó KHÔNG có trần cưỡng chế được.** Faucet Preview vẫn đang nhả token, nên "mắt thấy có token" không mâu thuẫn với "sổ ghi SUPERSEDED". Đời đó neo marker bằng chữ ký ví chứ không one-shot ⇒ người giữ khoá dựng lại được trạng thái cung với bộ đếm về 0 và đúc lại trọn hạn mức, hợp lệ theo đúng validator. Con số cung của nó là **lời hứa vận hành, không phải ràng buộc của chuỗi**. Dùng để thử luồng thì được; đừng để nó thành nguồn giá trị trong sản phẩm.
+  - **Đơn vị.** `1 LAMP = 10⁶ oildrop`. Mọi số lượng trên chuỗi là oildrop. Đối chiếu một con số cung với "36 tỷ" mà quên đổi đơn vị sẽ lệch đúng 10⁶ và dẫn bạn tới kết luận sai về token nào là thật.
+
+  Và cái bẫy ngược: một con số cung **khớp đúng** hạn mức cũng không chứng minh gì — ít nhất một policy trùng tên đang mang đúng con số đó. Chỉ cặp `(policy_id, asset_name)` mới quyết định.
+
+Giao dịch minh hoạ khác: Wakeme 1001 tLAMP Preview `01139ba8af1f7556b70a82126aff7fd1b940bc8157c973b45e019e27c7870f16` — ⚠ đọc như **bằng chứng luồng Wakeme từng chạy**, đừng đọc như khuôn mẫu để chép: nó tiêu đời tLAMP Preview nay đã `SUPERSEDED`, đời mà bảng trên dặn đừng lấy làm nguồn giá trị.
 
 ## 6. Checklist tuân thủ (§8) — trạng thái PhoenixKey (silent)
 
