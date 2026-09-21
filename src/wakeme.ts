@@ -33,8 +33,14 @@
  * The SDK does **not** build or parse redeemer CBOR. `buildGetLamp()` returns
  * an unsigned transaction the server assembled; the client signs it in the
  * Enclave and hands it back to `submitGetLamp()`. Model-A redeemer indices
- * (`Reclaim 0 · OwnEpoch 1 · ReclaimEpoch 2 · Redeem 3`; mint `GenesisVault 0 ·
+ * (spend `Reclaim 0 · OwnEpoch 1 · ReclaimEpoch 2`; mint `GenesisVault 0 ·
  * CloseVault 1`) live in `rust_core` and the Aiken validators, not here.
+ *
+ * A fourth spend redeemer, `Redeem 3`, was listed here until 2026-09-21. It no
+ * longer exists: the validator carries exactly the three above. Anything that
+ * encoded index 3 would be rejected on-chain, and anything that told a user
+ * their owned LAMP could be spent out was saying the opposite of what the
+ * contract guarantees.
  */
 
 import { createFetcher, FetchOptions } from "./fetcher";
@@ -153,8 +159,13 @@ export type WakemeVaultStatus = {
   conditional_lamp: number;
   /**
    * LAMP owned outright — together with `conditional_lamp` decides how much
-   * MAGIC the vault generates. Grows via the `OwnEpoch` redeemer, shrinks via
-   * `Redeem`; never forfeited.
+   * MAGIC the vault generates.
+   *
+   * **Only ever grows**, via the `OwnEpoch` redeemer. It is never forfeited and
+   * no redeemer can spend it: the `Redeem` path this doc used to name was
+   * removed from the validator, so there is no longer any transaction that
+   * takes owned LAMP back out. Treat a drop in this number as a bug on our
+   * side, not as something the user did.
    *
    * **Unit: OILDROP**, despite the `_lamp` suffix.
    */
