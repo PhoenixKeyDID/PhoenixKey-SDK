@@ -357,6 +357,20 @@ const claims = await new AppTokenVerifier().verify(appToken, MY_SERVICE_DID);
 // `handoff.userDid`, thứ chưa có chữ ký nào bảo vệ.
 ```
 
+> **⚠ Đổi từ 0.7.0 — phá vỡ tương thích.** Tham số thứ hai (`MY_SERVICE_DID`)
+> nay **bắt buộc**. Trước đó nó tuỳ chọn, và bỏ quên là tắt luôn phép kiểm
+> `aud` mà không có cảnh báo nào — trình biên dịch im, thời gian chạy im.
+>
+> Vì sao điều đó nguy hiểm: một thẻ được đúc cho **một** dịch vụ. Không kiểm
+> `aud`, máy chủ của bạn nhận cả thẻ đúc cho dịch vụ khác. Kẻ tấn công dựng
+> một dịch vụ của chính nó, dụ người dùng đăng nhập vào đó, rồi mang thẻ thu
+> được sang máy chủ của bạn — và đăng nhập với tư cách người dùng đó.
+>
+> Nâng cấp: truyền ServiceDID của bạn. Nếu bạn thật sự có ràng buộc khác thay
+> thế và muốn bỏ phép kiểm, gọi `verifyWithoutAudience(appToken)` — đặt tên
+> như vậy để người đọc chỗ gọi nhìn thấy phép kiểm đang tắt, thay vì phải đoán
+> từ một tham số vắng mặt.
+
 **Điều kiện tiên quyết, sai là trượt với `redirect_uri_mismatch` (400):**
 
 1. `redirectUri` phải khớp **nguyên chuỗi** một phần tử trong `serviceEndpoint[]`
