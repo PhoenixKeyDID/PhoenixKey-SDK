@@ -1,4 +1,12 @@
-import { WakemeModule, ActivationModule } from "../src/wakeme";
+import { readFileSync } from "fs";
+import { join } from "path";
+import {
+  WakemeModule,
+  ActivationModule,
+  WAKEME_SPEND_REDEEMER_INDEX,
+  WAKEME_MINT_REDEEMER_INDEX,
+} from "../src/wakeme";
+import * as sdk from "../src/index";
 import { PhoenixKeyError } from "../src/types";
 
 const BASE = "https://api.example.test/api/v1";
@@ -25,7 +33,7 @@ function mod(token: string | null = TOKEN) {
   return new WakemeModule(BASE, BASE, () => token);
 }
 
-describe("WakemeModule — model A routes live under /wakeme", () => {
+describe("WakemeModule — keyless-vault routes live under /wakeme", () => {
   it("build hits /wakeme/build", async () => {
     mockOk();
     await mod().buildGetLamp({ wallet_address: "addr_test1abc" });
@@ -186,5 +194,60 @@ describe("ActivationModule alias", () => {
   it("is the same class, not a wrapper", () => {
     expect(ActivationModule).toBe(WakemeModule);
     expect(new ActivationModule(BASE, BASE, () => TOKEN)).toBeInstanceOf(WakemeModule);
+  });
+});
+
+describe("redeemer indices — hợp đồng nhị phân với wakeme_vault (Wakeme@4512fe6)", () => {
+  // Nguồn: `WakemeRedeemer` và `VaultMintRedeemer` trong `wakeme_logic.ak`.
+  // SDK không tự mã hoá CBOR, nên hằng này là chỗ DUY NHẤT trong kho để đối
+  // chiếu. Bảng keeper cũ (`Reclaim 0 · OwnEpoch 1 · ReclaimEpoch 2`) lệch từng
+  // chỉ số một: bộ mã hoá còn dùng nó gửi `OwnEpoch` thành 1, chuỗi đọc là
+  // `ReclaimEpoch`. Mỗi chỉ số một bài riêng để khi đỏ, tên bài nói ngay chỉ số nào.
+
+  it.each([
+    ["OwnEpoch", 0],
+    ["ReclaimEpoch", 1],
+    ["Repin", 2],
+  ])("spend %s = %i", (name, index) => {
+    expect((WAKEME_SPEND_REDEEMER_INDEX as Record<string, number>)[name]).toBe(index);
+  });
+
+  it.each([
+    ["GenesisVault", 0],
+    ["CloseVault", 1],
+  ])("mint %s = %i", (name, index) => {
+    expect((WAKEME_MINT_REDEEMER_INDEX as Record<string, number>)[name]).toBe(index);
+  });
+
+  it("ghim cả hai bảng bằng literal — thêm/bớt một redeemer phải đổi bài này", () => {
+    expect(WAKEME_SPEND_REDEEMER_INDEX).toEqual({ OwnEpoch: 0, ReclaimEpoch: 1, Repin: 2 });
+    expect(WAKEME_MINT_REDEEMER_INDEX).toEqual({ GenesisVault: 0, CloseVault: 1 });
+  });
+
+  it("không còn `Reclaim` (keeper) và `Redeem` — hai tên đã bỏ khỏi chuỗi", () => {
+    const names = Object.keys(WAKEME_SPEND_REDEEMER_INDEX);
+    expect(names).not.toContain("Reclaim");
+    expect(names).not.toContain("Redeem");
+    expect(Object.values(WAKEME_SPEND_REDEEMER_INDEX)).not.toContain(3);
+  });
+
+  it("chỉ nối cuối: chỉ số liên tục 0..n-1 theo đúng thứ tự khai báo", () => {
+    for (const table of [WAKEME_SPEND_REDEEMER_INDEX, WAKEME_MINT_REDEEMER_INDEX]) {
+      expect(Object.values(table)).toEqual(Object.values(table).map((_, i) => i));
+    }
+  });
+
+  it("được xuất ra từ index — cùng một đối tượng, không phải bản chép", () => {
+    expect(sdk.WAKEME_SPEND_REDEEMER_INDEX).toBe(WAKEME_SPEND_REDEEMER_INDEX);
+    expect(sdk.WAKEME_MINT_REDEEMER_INDEX).toBe(WAKEME_MINT_REDEEMER_INDEX);
+  });
+
+  it("chú thích đầu src/wakeme.ts nêu đúng bảng này", () => {
+    // Hằng đổi mà lời giải thích không đổi thì tài liệu nói ngược mã.
+    const src = readFileSync(join(__dirname, "..", "src", "wakeme.ts"), "utf8");
+    const line = Object.entries(WAKEME_SPEND_REDEEMER_INDEX)
+      .map(([k, v]) => `${k} ${v}`)
+      .join(" · ");
+    expect(src).toContain(`\`${line}\``);
   });
 });

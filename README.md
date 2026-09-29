@@ -270,9 +270,17 @@ const { cardano_tx_hash } = await phoenix.wakeme.submitGetLamp(signedCborHex);
 
 // 4. dashboard
 const vault = await phoenix.wakeme.getVaultStatus(userDid);
-// phase 1 = Daily (locked LAMP generates MAGIC, an idle day returns 1 LAMP to the pot)
-// phase 2 = Epochy (an epoch with enough MAGIC spent unlocks 5 LAMP into the wallet)
+// phase 1 = Daily (locked LAMP generates MAGIC; nothing settles, nothing is taken back)
+// phase 2 = Epochy (an epoch with enough MAGIC spent moves 5 nightly units of
+//           `conditional_lamp` into `owned_lamp` — 5 LAMP at the D = 1001 cap)
 ```
+
+The vault is **keyless**: the server holds no key that governs a user's LAMP.
+`owned_lamp` is a record in the vault's datum that the LAMP can no longer be
+reclaimed — it stays in the vault, and no transaction moves it to a wallet. Only
+`conditional_lamp` can go back to the pot, and only after both the user's MAGIC
+spending and the DID itself have been silent for 1001 epochs or more. The pot has no
+withdraw path at all.
 
 Locked LAMP is a **right of use**, not a loan — no interest, no ownership, no
 voting weight until it vests. Nothing is borrowed, nothing is owed.

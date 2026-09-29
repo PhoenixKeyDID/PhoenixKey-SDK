@@ -6,16 +6,58 @@
  * `/activation/*` paths are aliases of the same handlers and are on their way
  * out (`WakemeController`, PhoenixKey-Database).
  *
- * Model A — two phases:
+ * ## The keyless vault (v3)
+ *
+ * Nobody holds a key that governs a user's LAMP — not the server, not Wakeme.
+ * The old "keeper" (`keeper_pkh`) that could reclaim a vault is gone. Only two
+ * transitions read a signature, and both are the DID owner's own (controller
+ * key plus one authorised device, checked through the TAAD anchor): opening the
+ * vault (`GenesisVault`) and changing what it points at (`Repin`). Settling an
+ * epoch and reclaiming an abandoned one need **no** signature — anyone may
+ * submit them, and the contract checks the outcome, not the sender.
+ *
+ * One vault script serves every DID. The vault UTxO lives at that shared script
+ * address (no stake credential), not at the user's wallet address, and carries
+ * a 13-field datum (`WakemeVaultDatum`).
+ *
+ * ### The two phases
  *
  *   1. **Daily** (days 1…1001) — `buildGetLamp()` moves `D = min(1001,
- *      ⌊pot / 1_000_000⌋)` LAMP from the pot into the user's vault, locked.
- *      Locked LAMP generates MAGIC (the engine only *reads* the balance, it
- *      never burns LAMP). A day with no MAGIC spent returns 1 LAMP to the pot.
- *   2. **Epochy** (from day 1002) — each epoch (5 days) in which the user
- *      spends at least `min_magic_consume` MAGIC unlocks 5 LAMP into their
- *      wallet, owned and withdrawable. Idle epochs carry over; 1001 consecutive
- *      idle epochs forfeit the remainder back to the pot.
+ *      ⌊pot / 1_000_000⌋)` LAMP from the pot into the user's vault as
+ *      `conditional_lamp` (= 1001 · `d_unit`). Nothing settles during this
+ *      phase and nothing is taken back: there is no nightly reclaim. Locked LAMP
+ *      generates MAGIC (the engine only *reads* the balance, it never burns
+ *      LAMP).
+ *   2. **Epochy** (from the first whole epoch after day 1001) — for each epoch
+ *      (5 days on mainnet) in which the user's MAGIC spending clears the
+ *      threshold, `OwnEpoch` moves `min(5 · d_unit, conditional)` from
+ *      `conditional_lamp` to `owned_lamp`. The proof is on-chain state of
+ *      MAGIC (the usage thread and the user's InstantGen vault checkpoint), not
+ *      a server's word. A settle covers exactly one epoch and moves the
+ *      vault's watermark (`last_used_period`) forward; epochs skipped below it
+ *      can never be settled, so the LAMP for them simply stays locked.
+ *
+ * ### What "owned" means
+ *
+ * `owned_lamp` is a **datum record**, not a payout. Owned LAMP stays in the
+ * vault: no redeemer moves it to a wallet, for the owner or anyone else. What
+ * ownership buys is that it is never reclaimed. Do not describe it to a user as
+ * "withdrawable" or "sent to your wallet" — there is no such transaction.
+ *
+ * ### What can be taken back
+ *
+ * Only `conditional_lamp`, and only by `ReclaimEpoch`, and only once **both** the
+ * user's MAGIC thread and the DID anchor have been silent for 1001 epochs (2002
+ * for the thread when its usage proof cannot be read). The LAMP returns to the
+ * pot; `owned_lamp` is untouched.
+ *
+ * ### The pot is one-way
+ *
+ * `wakeme_pot` has two spend redeemers and no key. `Dispense` pays one
+ * allotment into the DID's own vault; `Collect` only reshapes the pot's UTxOs
+ * and lets no LAMP and no ADA out. There is no withdraw path: LAMP leaves the
+ * pot only through `Dispense`, into a vault, and comes back through
+ * `ReclaimEpoch`.
  *
  * Locked LAMP is a **right of use**, not a loan — no interest, no ownership, no
  * voting weight until it vests. Nothing is borrowed and nothing is owed.
@@ -32,25 +74,58 @@
  *
  * The SDK does **not** build or parse redeemer CBOR. `buildGetLamp()` returns
  * an unsigned transaction the server assembled; the client signs it in the
- * Enclave and hands it back to `submitGetLamp()`. Model-A redeemer indices
- * (spend `Reclaim 0 · OwnEpoch 1 · ReclaimEpoch 2`; mint `GenesisVault 0 ·
- * CloseVault 1`) live in `rust_core` and the Aiken validators, not here.
+ * Enclave and hands it back to `submitGetLamp()`. The redeemer indices are
+ * pinned in {@link WAKEME_SPEND_REDEEMER_INDEX} and
+ * {@link WAKEME_MINT_REDEEMER_INDEX} so that anything encoding them by hand
+ * has one place to check against; the encoders themselves live in `rust_core`
+ * and the Aiken validators.
  *
- * A fourth spend redeemer, `Redeem 3`, was listed here until 2026-09-21. It no
- * longer exists: the validator carries exactly the three above. Anything that
- * encoded index 3 would be rejected on-chain, and anything that told a user
- * their owned LAMP could be spent out was saying the opposite of what the
- * contract guarantees.
+ * The spend indices are `OwnEpoch 0 · ReclaimEpoch 1 · Repin 2`. Two older
+ * tables are wrong and must not be copied:
+ *
+ *   - `Reclaim 0 · OwnEpoch 1 · ReclaimEpoch 2` — the keeper-era table. Its
+ *     leading `Reclaim` was dropped with the keeper, which shifted every other
+ *     index down by one. An encoder still using it sends `OwnEpoch` as `1`,
+ *     which the chain reads as `ReclaimEpoch`.
+ *   - `Redeem 3` — no longer exists (removed 2026-09-21). Index 3 is rejected
+ *     on-chain, and anything that told a user their owned LAMP could be spent
+ *     out was saying the opposite of what the contract guarantees.
+ *
+ * The order is a binary contract: new redeemers may only be appended.
  */
+
+/**
+ * Constructor index of each `wakeme_vault` **spend** redeemer
+ * (`WakemeRedeemer`, `wakeme_logic.ak`). No fields. Append-only.
+ */
+export const WAKEME_SPEND_REDEEMER_INDEX = {
+  OwnEpoch: 0,
+  ReclaimEpoch: 1,
+  Repin: 2,
+} as const;
+
+/**
+ * Constructor index of each `wakeme_vault` **mint** redeemer
+ * (`VaultMintRedeemer`, `wakeme_logic.ak`) — the vault-NFT policy is the vault
+ * script hash itself.
+ */
+export const WAKEME_MINT_REDEEMER_INDEX = {
+  GenesisVault: 0,
+  CloseVault: 1,
+} as const;
 
 import { createFetcher, FetchOptions } from "./fetcher";
 import { ResilientSSE, SseOptions } from "./sse";
 import { PhoenixKeyError, SseHandlers } from "./types";
 
-// ─── Model A — GetLAMP into the vault ────────────────────────────────────────
+// ─── Keyless vault v3 — GetLAMP into the vault ────────────────────────────────────────
 
 export type WakemeBuildRequest = {
-  /** Bech32 Shelley address that will hold the vault. */
+  /**
+   * Bech32 Shelley address of the user's wallet. This is **not** where the
+   * vault lives: every vault sits at the one shared `wakeme_vault` script
+   * address (see `vault_address` in {@link WakemeBuildResponse}).
+   */
   wallet_address: string;
   /** Optional `blake2b_256(did ‖ salt)` hex; the server derives one if absent. */
   did_commit?: string;
@@ -158,14 +233,16 @@ export type WakemeVaultStatus = {
    */
   conditional_lamp: number;
   /**
-   * LAMP owned outright — together with `conditional_lamp` decides how much
-   * MAGIC the vault generates.
+   * LAMP settled as the user's — together with `conditional_lamp` decides how
+   * much MAGIC the vault generates.
    *
    * **Only ever grows**, via the `OwnEpoch` redeemer. It is never forfeited and
-   * no redeemer can spend it: the `Redeem` path this doc used to name was
-   * removed from the validator, so there is no longer any transaction that
-   * takes owned LAMP back out. Treat a drop in this number as a bug on our
-   * side, not as something the user did.
+   * no redeemer can move it out of the vault: the `Redeem` path this doc used
+   * to name was removed from the validator, so there is no transaction that
+   * takes owned LAMP out — to a wallet or anywhere else. "Owned" is a record in
+   * the datum that the LAMP is safe from reclaim, not a balance the user can
+   * withdraw. Treat a drop in this number as a bug on our side, not as
+   * something the user did.
    *
    * **Unit: OILDROP**, despite the `_lamp` suffix.
    */
@@ -179,7 +256,10 @@ export type WakemeVaultStatus = {
    */
   d_unit: number;
   /**
-   * LAMP returned to the pot (daily anti-idle + Epochy forfeit).
+   * LAMP returned to the pot — only through `ReclaimEpoch`, once the user's
+   * MAGIC thread and the DID anchor have both been silent for 1001 epochs (2002
+   * when the thread's usage proof cannot be read).
+   * There is no nightly or per-day reclaim.
    *
    * **Unit: OILDROP**, despite the `_lamp` suffix. On-chain this is the datum
    * field `reclaimed_to_pot` — the `_lamp` tail is added by the wire DTO only.
@@ -277,7 +357,7 @@ export type WakemeMagicOrderStatus = {
 /**
  * @deprecated The 200,000₫ → 1001 LAMP + 10 ADA package bought through a Genie
  * agent is retired; `ActivationController` on the backend carries the same
- * notice. Wakeme model A replaces it — write nothing new against these types.
+ * notice. The keyless Wakeme vault replaces it — write nothing new against these types.
  */
 export type ActivationSession = {
   activation_id: string;
@@ -339,11 +419,12 @@ export class WakemeModule {
     return token;
   }
 
-  // ── Model A — vault ────────────────────────────────────────────────────────
+  // ── Keyless vault v3 ────────────────────────────────────────────────────────
 
   /**
    * Step 1 — ask the server for an unsigned transaction that moves `D` LAMP
-   * from the pot into a vault at `wallet_address` and locks it.
+   * from the pot into the user's vault (one per DID, at the shared vault script
+   * address) and locks it as `conditional_lamp`.
    *
    * One DID gets one vault; a second call is guarded server-side. Sign the
    * returned CBOR in the Enclave, then pass it to {@link submitGetLamp}.
