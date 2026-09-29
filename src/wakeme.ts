@@ -96,7 +96,7 @@
 
 /**
  * Constructor index of each `wakeme_vault` **spend** redeemer
- * (`WakemeRedeemer`, `wakeme_logic.ak`). No fields. Append-only.
+ * (constructor order of the on-chain redeemer type). No fields. Append-only.
  */
 export const WAKEME_SPEND_REDEEMER_INDEX = {
   OwnEpoch: 0,
@@ -106,7 +106,7 @@ export const WAKEME_SPEND_REDEEMER_INDEX = {
 
 /**
  * Constructor index of each `wakeme_vault` **mint** redeemer
- * (`VaultMintRedeemer`, `wakeme_logic.ak`) — the vault-NFT policy is the vault
+ * (constructor order of the on-chain redeemer type) — the vault-NFT policy is the vault
  * script hash itself.
  */
 export const WAKEME_MINT_REDEEMER_INDEX = {

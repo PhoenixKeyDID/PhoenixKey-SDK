@@ -197,8 +197,8 @@ describe("ActivationModule alias", () => {
   });
 });
 
-describe("redeemer indices — hợp đồng nhị phân với wakeme_vault (Wakeme@4512fe6)", () => {
-  // Nguồn: `WakemeRedeemer` và `VaultMintRedeemer` trong `wakeme_logic.ak`.
+describe("redeemer indices — hợp đồng nhị phân với validator wakeme_vault on-chain", () => {
+  // Nguồn: thứ tự constructor của hai kiểu redeemer (chi và đúc) của validator on-chain.
   // SDK không tự mã hoá CBOR, nên hằng này là chỗ DUY NHẤT trong kho để đối
   // chiếu. Bảng keeper cũ (`Reclaim 0 · OwnEpoch 1 · ReclaimEpoch 2`) lệch từng
   // chỉ số một: bộ mã hoá còn dùng nó gửi `OwnEpoch` thành 1, chuỗi đọc là

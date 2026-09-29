@@ -275,7 +275,7 @@ const vault = await phoenix.wakeme.getVaultStatus(userDid);
 //           `conditional_lamp` into `owned_lamp` — 5 LAMP at the D = 1001 cap)
 ```
 
-The vault is **keyless**: the server holds no key that governs a user's LAMP.
+The vault is **keyless by design, once the validator is deployed**: the server holds no key that governs a user's LAMP.
 `owned_lamp` is a record in the vault's datum that the LAMP can no longer be
 reclaimed — it stays in the vault, and no transaction moves it to a wallet. Only
 `conditional_lamp` can go back to the pot, and only after both the user's MAGIC
