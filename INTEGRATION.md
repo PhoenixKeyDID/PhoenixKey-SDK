@@ -68,7 +68,7 @@ Cột trạng thái:
 | **Tạo DID** | `POST /identity/register` (Person) · `POST /identity/org/create` · `/identity/org/founding` · `POST /identity/asset/create` · resolve `GET /identity/{did}/document` · `/identifiers/{did}` (W3C) · `/identity/{did}/pubkey` · `/identity/{did}/status` | **READY** |
 | **Chữ ký phiên web** (QR-pairing) | `POST /auth/session/init` → `GET /auth/session/{id}/stream` (SSE) → mobile `POST /auth/session/{id}/approve` → web nhận `session_token` (JWT **24 giờ** — `PHOENIXKEY_SESSION_TTL_SECONDS`, mặc định 86400) + `linked_device_token` (30 ngày); SSO `POST /auth/token/exchange` → `app_token` 15 phút, xem §"Đổi thẻ phiên lấy thẻ app" | **READY** |
 | **Nhận ADA / xem số dư** | `POST /wallet/register` (Phoenix custody) · `POST /wallet/standard/register` (CIP-1852) · `GET /wallet/{did}/all` · `GET /wallet/standard/{did}` (số dư ADA/LAMP/CARP từ Blockfrost). 🔒 **Ba endpoint GET đọc ví — `/wallet/{did}/balance`, `/wallet/standard/{did}`, `/wallet/{did}/all` — bắt Bearer `session` VÀ ép `caller_did == path_did`; DID khác trả 401.** Không có đường đọc ví của người khác: liên kết DID → địa chỉ → số dư là oracle liên kết danh tính, không phải dữ liệu công khai. **Số lượng on-chain trả về là JSON _string_** (oildrop/lovelace/nanoMAGIC) — xem §"Hợp đồng số lớn" | **READY** (string-serialize: Database PR #102 đã merge 2026-07-30) |
-| **GetLAMP v5** (khoá 1001 LAMP vào vault) | `POST /wakeme/build` (dựng tx chưa ký vào-vault + khoá `conditional_lamp`) → client Enclave ký → `POST /wakeme/submit`. **Đường chính thống là `/wakeme/*`** (`WakemeController`); `/activation/getlamp/{build,submit}` là **bí danh cũ** vẫn còn bind ở `ActivationVaultController` — đừng nối vào cho tích hợp mới | **KHUNG** — chờ deploy validator `activation_vault` |
+| **GetLAMP v5** (khoá 1001 LAMP vào vault) | `POST /wakeme/build` (dựng tx chưa ký vào-vault + khoá `conditional_lamp`) → client Enclave ký → `POST /wakeme/submit`. **Đường chính thống là `/wakeme/*`** (`WakemeController`); `/activation/getlamp/{build,submit}` là **bí danh cũ** vẫn còn bind ở `ActivationVaultController` — đừng nối vào cho tích hợp mới | **KHUNG** — chờ deploy validator `wakeme_vault` (két không khoá v3: không ai giữ khoá; `owned_lamp` là bản ghi trong datum, không có giao dịch rút nó ra ví) |
 | Vault Wakeme — đọc | `GET /wakeme/vault/{did}` (bảng điều khiển 2 pha) · `GET /wakeme/pot` (sức khoẻ pot + D hiện tại). Bí danh cũ `/activation/*` vẫn bind | **KHUNG** — chờ deploy validator + Registry |
 | ~~Activation cũ (luồng Genie)~~ | ~~`POST /activation/initiate` → `/activation/{id}/confirm-payment` → `/activation/{id}/submit-tx` · SSE `/activation/{id}/events` · `/status` · `/cancel`~~ | 🔴 **GỠ RỒI — đừng nối vào.** Dòng này từng ghi **READY**; sai kể từ **2026-09-03** (`PhoenixKey-Database/docs/VND-GENIE-REMOVAL.md`). Đo lại 2026-09-09: chỉ `ActivationVaultController` bind `/activation`, và nó **không** bind sáu đường này ⇒ **404**. SDK nay ném `PhoenixKeyError{code:"flow_retired"}` ngay, không đi mạng (SDK#9). Dùng **GetLAMP v5** ở dòng trên |
 | Guardian recovery | `POST /guardians/add` · `/guardians/remove` (owner-signed) | **READY** |
@@ -412,22 +412,24 @@ Deploy tx: `b22bc2077bd3e91d306faa6324d70083701b7d0ebda43e40e1a6943a9dc16c5b` (v
 
   Sổ policy là **nguồn duy nhất**. Nó công khai, đọc được không cần tài khoản:
 
-  - Kho: [`MagicLampEco/LAMP`](https://github.com/MagicLampEco/LAMP) · tệp [`Genesis/offchain/src/lampPolicies.ts`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts)
+  - Kho: [`MagicLampEco/LAMP`](https://github.com/MagicLampEco/LAMP) · tệp [`Genesis/offchain/src/lampPolicies.ts`](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts)
   - Hàm cần gọi: `activeLampPolicyId(network)` — nó **ném** nếu mạng đó chưa có bản `ACTIVE`, thay vì trả một giá trị trông hợp lệ.
   - Đối chiếu nhanh không cần clone:
     ```bash
     curl -s https://raw.githubusercontent.com/MagicLampEco/LAMP/main/Genesis/offchain/src/lampPolicies.ts | grep -n 'policyId\|status'
     ```
 
-  Bảng dưới là **bản chép**, đo tại commit [`1ef32ee0`](https://github.com/MagicLampEco/LAMP/commit/1ef32ee0b168147781ef01dfd68cb1a01cf32623) ngày 2026-09-20. Bản chép thì trôi — nếu nó lệch với sổ, **sổ đúng**.
+  Bảng dưới là **bản chép**, đo tại commit [`8b3a90fc`](https://github.com/MagicLampEco/LAMP/commit/8b3a90fce138bee22ea8bba4bb4aa3454c15d251) ngày 2026-09-29. Bản chép thì trôi — nếu nó lệch với sổ, **sổ đúng**.
 
   | mạng | policy id | tên tài sản | trạng thái |
   |---|---|---|---|
-  | Preprod | `8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd` | `744c414d50` | [`ACTIVE`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L184) — **tạm thời**, xem dưới |
-  | Preview | `7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` | `744c414d50` | [`SUPERSEDED`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L235) — đời thay còn [`PENDING-MINT`](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L258) |
-  | Mainnet | `55d3e01bb6c469e02665e4b6573ce65bbaf7a50ad2024e247eb180f0` | **`4c414d50`** ⚠ khác testnet | `ACTIVE` — nhưng là [**bản MỒI sẽ bị thay**](https://github.com/MagicLampEco/LAMP/blob/1ef32ee0b168147781ef01dfd68cb1a01cf32623/Genesis/offchain/src/lampPolicies.ts#L116) |
+  | Preprod | `53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743` | `744c414d50` | [`ACTIVE`](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L242) — **tạm thời**, xem dưới |
+  | Preview | `7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` | `744c414d50` | [`SUPERSEDED`](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L278) — đời thay còn [`PENDING-MINT`](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L301) |
+  | Mainnet | `55d3e01bb6c469e02665e4b6573ce65bbaf7a50ad2024e247eb180f0` | **`4c414d50`** ⚠ khác testnet | `ACTIVE` — nhưng là [**bản MỒI sẽ bị thay**](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L116) |
 
-  ⚠ **`ACTIVE` ở đây KHÔNG nghĩa là ổn định.** Nó chỉ nghĩa là "bản đang dùng của mạng này, hôm nay". Preprod đã đi qua **ba** đời policy id và hai đời đầu đều đã `SUPERSEDED`. Và bản ghi mainnet tự khai nguyên văn: *"Bản MỒI. Sẽ bị thay bởi policy uỷ quyền OrgDID — policy id SẼ KHÁC. Đừng nhúng cứng."* Không có mạng nào miễn trừ.
+  ⚠ **Bản trước của bảng này ghi Preprod `8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd` là `ACTIVE`. Nay nó là [`SUPERSEDED`](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L186)** (thay ngày 2026-09-26 bởi giá trị ở bảng trên). Token còn trên chuỗi nhưng không tích hợp mới vào đó. Ai còn ghim giá trị cũ sẽ đọc số dư của một đời đã bị thay, và không dòng lỗi nào báo.
+
+  ⚠ **`ACTIVE` ở đây KHÔNG nghĩa là ổn định.** Nó chỉ nghĩa là "bản đang dùng của mạng này, hôm nay". Preprod đã đi qua **bốn** đời policy id và ba đời đầu đều đã `SUPERSEDED`. Và bản ghi mainnet tự khai nguyên văn: *"Bản MỒI. Sẽ bị thay bởi policy uỷ quyền OrgDID — policy id SẼ KHÁC. Đừng nhúng cứng."* Không có mạng nào miễn trừ.
 
   ### ĐỌC thì được, NƯỚNG thì không — phân biệt này quyết định bạn có mất tiền hay không
 
