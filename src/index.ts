@@ -39,7 +39,11 @@ export { NetworkModule } from "./network";
 export { SupportModule } from "./support";
 export { WalletModule, PREPROD_SLOT_ORIGIN_MS, MAINNET_SLOT_ORIGIN_MS, paymentKeyHashFromAddress } from "./wallet";
 export type { Balance, MagicClaimResult } from "./wallet";
-export { WakemeModule } from "./wakeme";
+export {
+  WakemeModule,
+  WAKEME_SPEND_REDEEMER_INDEX,
+  WAKEME_MINT_REDEEMER_INDEX,
+} from "./wakeme";
 export type {
   WakemeBuildRequest,
   WakemeBuildResponse,
