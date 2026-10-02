@@ -419,17 +419,15 @@ Deploy tx: `b22bc2077bd3e91d306faa6324d70083701b7d0ebda43e40e1a6943a9dc16c5b` (v
     curl -s https://raw.githubusercontent.com/MagicLampEco/LAMP/main/Genesis/offchain/src/lampPolicies.ts | grep -n 'policyId\|status'
     ```
 
-  Bảng dưới là **bản chép**, đo tại commit [`8b3a90fc`](https://github.com/MagicLampEco/LAMP/commit/8b3a90fce138bee22ea8bba4bb4aa3454c15d251) ngày 2026-09-29. Bản chép thì trôi — nếu nó lệch với sổ, **sổ đúng**.
+  Bảng dưới là **bản chép**, đo tại commit [`64aaa439`](https://github.com/MagicLampEco/LAMP/commit/64aaa439e741648de3abba3219051d5eaa217aad) ngày 2026-09-27. Bản chép thì trôi — nếu nó lệch với sổ, **sổ đúng**.
 
   | mạng | policy id | tên tài sản | trạng thái |
   |---|---|---|---|
-  | Preprod | `53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743` | `744c414d50` | [`ACTIVE`](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L242) — **tạm thời**, xem dưới |
-  | Preview | `7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` | `744c414d50` | [`SUPERSEDED`](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L278) — đời thay còn [`PENDING-MINT`](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L301) |
-  | Mainnet | `55d3e01bb6c469e02665e4b6573ce65bbaf7a50ad2024e247eb180f0` | **`4c414d50`** ⚠ khác testnet | `ACTIVE` — nhưng là [**bản MỒI sẽ bị thay**](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L116) |
+  | Preprod | `53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743` | `744c414d50` | [`ACTIVE`](https://github.com/MagicLampEco/LAMP/blob/64aaa439e741648de3abba3219051d5eaa217aad/Genesis/offchain/src/lampPolicies.ts#L242) — **tạm thời**, xem dưới. Đời trước `8169b76c…` đã [`SUPERSEDED`](https://github.com/MagicLampEco/LAMP/blob/64aaa439e741648de3abba3219051d5eaa217aad/Genesis/offchain/src/lampPolicies.ts#L186) từ 2026-09-26 |
+  | Preview | `7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` | `744c414d50` | [`SUPERSEDED`](https://github.com/MagicLampEco/LAMP/blob/64aaa439e741648de3abba3219051d5eaa217aad/Genesis/offchain/src/lampPolicies.ts#L278) — đời thay còn [`PENDING-MINT`](https://github.com/MagicLampEco/LAMP/blob/64aaa439e741648de3abba3219051d5eaa217aad/Genesis/offchain/src/lampPolicies.ts#L301) |
+  | Mainnet | `55d3e01bb6c469e02665e4b6573ce65bbaf7a50ad2024e247eb180f0` | **`4c414d50`** ⚠ khác testnet | `ACTIVE` trong sổ, nhưng policy [**đã ĐÓNG 2026-09-27**](https://github.com/MagicLampEco/LAMP/blob/64aaa439e741648de3abba3219051d5eaa217aad/Genesis/offchain/src/lampPolicies.ts#L118): không đúc thêm được, toàn bộ 26,37 tỷ nằm vĩnh viễn ở `lock_vault`. **Không phải LAMP chính thức sẽ lưu hành** — policy chính thức trên mainnet chưa phát hành |
 
-  ⚠ **Bản trước của bảng này ghi Preprod `8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd` là `ACTIVE`. Nay nó là [`SUPERSEDED`](https://github.com/MagicLampEco/LAMP/blob/8b3a90fce138bee22ea8bba4bb4aa3454c15d251/Genesis/offchain/src/lampPolicies.ts#L186)** (thay ngày 2026-09-26 bởi giá trị ở bảng trên). Token còn trên chuỗi nhưng không tích hợp mới vào đó. Ai còn ghim giá trị cũ sẽ đọc số dư của một đời đã bị thay, và không dòng lỗi nào báo.
-
-  ⚠ **`ACTIVE` ở đây KHÔNG nghĩa là ổn định.** Nó chỉ nghĩa là "bản đang dùng của mạng này, hôm nay". Preprod đã đi qua **bốn** đời policy id và ba đời đầu đều đã `SUPERSEDED`. Và bản ghi mainnet tự khai nguyên văn: *"Bản MỒI. Sẽ bị thay bởi policy uỷ quyền OrgDID — policy id SẼ KHÁC. Đừng nhúng cứng."* Không có mạng nào miễn trừ.
+  ⚠ **`ACTIVE` ở đây KHÔNG nghĩa là ổn định.** Nó chỉ nghĩa là "bản đang dùng của mạng này, hôm nay". Preprod đã đi qua **bốn** đời policy id và ba đời đầu đều đã `SUPERSEDED`. Còn mainnet: sổ giữ `ACTIVE` chỉ vì chưa có bản thay thế, trong khi policy đó đã đóng hẳn — tx close-mint [`9d0724bd…`](https://cardanoscan.io/transaction/9d0724bd9865b14a6e77cf4495bdf73c41489689f38264e43e7ea2757dcff275) và close-lock [`8cb8e9ab…`](https://cardanoscan.io/transaction/8cb8e9abfe318d74cd5f4faaf6e28dd0dd7479e0231f181efa10a1c3bd7ebf9c). Không có mạng nào miễn trừ.
 
   ### ĐỌC thì được, NƯỚNG thì không — phân biệt này quyết định bạn có mất tiền hay không
 
