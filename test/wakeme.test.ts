@@ -64,17 +64,13 @@ describe("WakemeModule — keyless-vault routes live under /wakeme", () => {
     ]);
   });
 
-  it("GetMAGIC quote / checkout / order hit their /wakeme paths", async () => {
-    mockOk();
-    const m = mod();
-    await m.quoteMagic({ fiat_currency: "VND", fiat_amount: 200000 });
-    await m.checkoutMagic("q-1", "vietqr");
-    await m.getMagicOrder("o-1");
-    expect(calls).toEqual([
-      `${BASE}/wakeme/getmagic/quote`,
-      `${BASE}/wakeme/getmagic/checkout`,
-      `${BASE}/wakeme/getmagic/o-1`,
-    ]);
+  it("GetMAGIC was removed — the module exposes no method for it", () => {
+    // Server answers 410 GETMAGIC_MODULE_RETIRED since 2026-09-14; the SDK
+    // dropped the three methods in 0.8.0. Guards against re-adding them.
+    const m = mod() as unknown as Record<string, unknown>;
+    expect(m.quoteMagic).toBeUndefined();
+    expect(m.checkoutMagic).toBeUndefined();
+    expect(m.getMagicOrder).toBeUndefined();
   });
 
   it("a DID with a colon is percent-encoded into the path", async () => {

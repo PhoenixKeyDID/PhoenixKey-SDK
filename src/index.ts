@@ -53,10 +53,6 @@ export type {
   WakemeVaultMagic,
   WakemePotStatus,
   WakemeGenEntry,
-  WakemeMagicQuoteRequest,
-  WakemeMagicQuote,
-  WakemeMagicCheckout,
-  WakemeMagicOrderStatus,
 } from "./wakeme";
 
 // Deprecated aliases — one release only, then removed.
