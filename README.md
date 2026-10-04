@@ -249,8 +249,11 @@ const { cardano_tx_hash } = await phoenix.wallet.claimMagic();
 
 ## Step 6 — Wakeme (vault LAMP → MAGIC → vesting)
 
-Wakeme is one name for what used to be three: *Activation*, *GetLAMP* and
-*GetMAGIC*. It runs under `/wakeme/*`.
+Wakeme is one name for what used to be two: *Activation* and *GetLAMP*. It runs
+under `/wakeme/*`. The old *GetMAGIC* module (buy CARP with fiat) no longer
+exists: the server answers `410 GETMAGIC_MODULE_RETIRED` since 2026-09-14 and the
+SDK removed `quoteMagic` / `checkoutMagic` / `getMagicOrder` in 0.8.0 (see
+`CHANGELOG.md`).
 
 ```ts
 // 1. how much would a new user get right now?
