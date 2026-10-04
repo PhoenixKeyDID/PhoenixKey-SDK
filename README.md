@@ -240,10 +240,11 @@ const liveMagic = WalletModule.extrapolateAccrued(
   Date.now(),
   PREPROD_SLOT_ORIGIN_MS, // or MAINNET_SLOT_ORIGIN_MS
 );
-
-// Mint accrued MAGIC to user's wallet — auth required
-const { cardano_tx_hash } = await phoenix.wallet.claimMagic();
 ```
+
+> MAGIC is not minted to a wallet: the old `claimMagic()` (`POST /wallet/magic/claim`)
+> was removed in 0.8.0 because the server always answers `410 MAGIC_CLAIM_DEPRECATED`.
+> Read the MAGIC balance from `getBalance()` / the Wakeme vault instead.
 
 ---
 

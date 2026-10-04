@@ -1,4 +1,11 @@
-import { paymentKeyHashFromAddress } from "../src/wallet";
+import { paymentKeyHashFromAddress, WalletModule } from "../src/wallet";
+
+describe("WalletModule — MAGIC claim removed", () => {
+  it("exposes no claimMagic (server answers 410 MAGIC_CLAIM_DEPRECATED)", () => {
+    const w = new WalletModule("http://x", () => null) as unknown as Record<string, unknown>;
+    expect(w.claimMagic).toBeUndefined();
+  });
+});
 
 // ─── Local bech32 encoder (test-only) to build valid CIP-19 vectors ──────────
 const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
