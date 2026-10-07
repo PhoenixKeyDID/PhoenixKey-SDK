@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phoenixkey-sdk"
+version = "0.1.0"
+description = "Verify-only Python client for PhoenixKey identity: user-key intent/auth-proof verification and app_token (JWKS) verification."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["cryptography>=42"]
+keywords = ["phoenixkey", "did", "identity", "auth", "cardano"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/PhoenixKeyDID/PhoenixKey-SDK"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+phoenixkey_sdk = ["py.typed"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
