@@ -28,9 +28,14 @@ export class IdentityModule {
   /**
    * Lookup owner public key của một DID. Public — không cần auth.
    * Use case: 3rd-party backend verify chữ ký Hardware Key của user.
+   *
+   * @param publicKeyHex Tuỳ chọn. Vắng ⇒ khoá owner MỚI NHẤT (hành vi cũ — chỉ
+   *   trả lời được về MỘT trong các khoá owner của DID). Có ⇒ bản ghi của đúng
+   *   khoá đó kèm `key_role` + `status`; 404 nếu DID không có khoá ấy.
    */
-  async getPubkey(userDid: string): Promise<IdentityPubkey> {
-    return this.fetch<IdentityPubkey>(`/identity/${encodeURIComponent(userDid)}/pubkey`);
+  async getPubkey(userDid: string, publicKeyHex?: string): Promise<IdentityPubkey> {
+    const query = publicKeyHex ? `?key=${encodeURIComponent(publicKeyHex)}` : "";
+    return this.fetch<IdentityPubkey>(`/identity/${encodeURIComponent(userDid)}/pubkey${query}`);
   }
 
   /**
