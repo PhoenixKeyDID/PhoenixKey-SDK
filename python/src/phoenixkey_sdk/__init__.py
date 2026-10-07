@@ -1,6 +1,7 @@
 """phoenixkey_sdk -- verify-only Python client for PhoenixKey identity."""
 
 from ._http import Fetch, HttpResponse
+from .app_token import AppTokenClaims, AppTokenVerifier, key_role_at_least, key_role_from_claim
 from .canonical import canonical_json_bytes, canonical_json_string
 from .envelope import RP_AUTH_PREFIX_V1, encode_legacy_concat, encode_rp_auth_v1
 from .errors import PhoenixKeyError
@@ -12,6 +13,8 @@ from .verifier import (
 )
 
 __all__ = [
+    "AppTokenClaims",
+    "AppTokenVerifier",
     "DEFAULT_PHOENIXKEY_API_URL",
     "Fetch",
     "HttpResponse",
@@ -24,5 +27,7 @@ __all__ = [
     "canonical_json_string",
     "encode_legacy_concat",
     "encode_rp_auth_v1",
+    "key_role_at_least",
+    "key_role_from_claim",
 ]
 __version__ = "0.1.0"
