@@ -335,6 +335,33 @@ app.post("/orilife/transfer", async (req, res) => {
 });
 ```
 
+**Pin the signing key.** By default `AppTokenVerifier` trusts whatever keys the
+JWKS (`/api/v1/.well-known/jwks.json`) returns. TLS ends at the CDN edge, so a
+bad or coerced CDN could add a key of its own and mint `app_token`s for any
+DID. Pin the thumbprint(s) of the key you expect, taken from a JWKS you
+checked out of band:
+
+```bash
+# RFC 7638 thumbprint of the first key in a saved jwks.json
+jq -cj '.keys[0] | {crv, kty, x}' jwks.json | openssl dgst -sha256 -binary \
+  | openssl base64 -A | tr '+/' '-_' | tr -d '='
+```
+
+```ts
+import { AppTokenVerifier, ed25519JwkThumbprint } from "@phoenixkeydid/phoenixkey-sdk/verifier";
+
+const verifier = new AppTokenVerifier({
+  pinnedJwkThumbprints: ["<thumbprint from the command above>"],  // or ed25519JwkThumbprint(jwk)
+});
+```
+
+Keys whose thumbprint is not listed are ignored; a token pointing at one fails
+with `jwks_key_not_pinned` (no fallback to another key). An empty list throws
+at construction. Without the option the old behaviour stays, with one
+`console.warn` per instance (route it with `onWarning`). When PhoenixKey rotates
+its signing key, verify the new JWKS out of band and add the new thumbprint
+before the old key is retired.
+
 **2. `key_role: "viewer"` from an old session means "role unknown", not "restricted on purpose".**
 Sessions minted before PhoenixKey added role claims — or a token whose
 `key_role` claim is missing/garbled — come back as `"viewer"` (the SDK's
