@@ -87,9 +87,9 @@ export class PhoenixKeyClient {
   readonly network: NetworkModule;
   /** Get LAMP support session (spec §15.8 stub). */
   readonly support: SupportModule;
-  /** Wallet balance + MAGIC accrual + claim (testnet release). */
+  /** Wallet balance + MAGIC accrual (testnet release). */
   readonly wallet: WalletModule;
-  /** Wakeme (keyless vault v3) — vault GetLAMP, MAGIC yield, pot, GetMAGIC (spec §115). */
+  /** Wakeme (keyless vault v3) — vault GetLAMP, MAGIC yield, pot (spec §115). */
   readonly wakeme: WakemeModule;
   /** Vòng đời thiết bị tự-quản — xem/đặt tên/thu hồi (đòi phiên vai owner). */
   readonly devices: DeviceModule;

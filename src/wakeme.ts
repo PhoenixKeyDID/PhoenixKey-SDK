@@ -1,8 +1,10 @@
 /**
  * PhoenixKey SDK — Wakeme Module
  *
- * Wakeme is the single name for what used to be split across "Activation",
- * "GetLAMP" and "GetMAGIC". The server serves it under `/wakeme/*`; the older
+ * Wakeme is the single name for what used to be split across "Activation"
+ * and "GetLAMP". (A third piece, "GetMAGIC", was removed from the server on
+ * 2026-09-14 and from this SDK in 0.8.0 — see CHANGELOG.md.) The server serves
+ * it under `/wakeme/*`; the older
  * `/activation/*` paths are aliases of the same handlers and are on their way
  * out (`WakemeController`, PhoenixKey-Database).
  *
@@ -316,42 +318,6 @@ export type WakemeGenEntry = {
   note_readonly: string;
 };
 
-// ─── GetMAGIC — buy CARP with fiat through GreenBack ─────────────────────────
-
-export type WakemeMagicQuoteRequest = {
-  /** ISO-4217, e.g. "VND". */
-  fiat_currency: string;
-  /** Smallest unit. Send exactly one of `fiat_amount` / `carp_amount`. */
-  fiat_amount?: number;
-  carp_amount?: number;
-};
-
-export type WakemeMagicQuote = {
-  quote_id: string;
-  fiat_currency: string;
-  fiat_amount: number;
-  carp_amount: number;
-  rate: string;
-  fee_breakdown: { fx_buffer: number; network: number };
-  expires_at: number;
-};
-
-export type WakemeMagicCheckout = {
-  order_id: string;
-  payment_url: string;
-  carp_amount: number;
-  status: string;
-  expires_at: number;
-};
-
-export type WakemeMagicOrderStatus = {
-  order_id: string;
-  status: "PENDING_PAYMENT" | "PAID" | "CARP_DELIVERED" | "FAILED" | "EXPIRED";
-  carp_amount: number;
-  cardano_tx_hash: string | null;
-  fail_reason: string | null;
-};
-
 // ─── Legacy — the VND / Genie activation package ─────────────────────────────
 
 /**
@@ -467,34 +433,6 @@ export class WakemeModule {
   async getGenEntry(did: string): Promise<WakemeGenEntry> {
     return this.fetch<WakemeGenEntry>(
       `/wakeme/gen-entry?did=${encodeURIComponent(did)}`,
-    );
-  }
-
-  // ── GetMAGIC — fiat → CARP ─────────────────────────────────────────────────
-
-  async quoteMagic(req: WakemeMagicQuoteRequest): Promise<WakemeMagicQuote> {
-    return this.fetch<WakemeMagicQuote>("/wakeme/getmagic/quote", {
-      method: "POST",
-      body: JSON.stringify(req),
-      bearerToken: this.requireToken(),
-    } as FetchOptions);
-  }
-
-  async checkoutMagic(
-    quoteId: string,
-    paymentMethod: string,
-  ): Promise<WakemeMagicCheckout> {
-    return this.fetch<WakemeMagicCheckout>("/wakeme/getmagic/checkout", {
-      method: "POST",
-      body: JSON.stringify({ quote_id: quoteId, payment_method: paymentMethod }),
-      bearerToken: this.requireToken(),
-    } as FetchOptions);
-  }
-
-  async getMagicOrder(orderId: string): Promise<WakemeMagicOrderStatus> {
-    return this.fetch<WakemeMagicOrderStatus>(
-      `/wakeme/getmagic/${encodeURIComponent(orderId)}`,
-      { bearerToken: this.requireToken() } as FetchOptions,
     );
   }
 

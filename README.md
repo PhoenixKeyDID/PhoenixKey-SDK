@@ -240,17 +240,21 @@ const liveMagic = WalletModule.extrapolateAccrued(
   Date.now(),
   PREPROD_SLOT_ORIGIN_MS, // or MAINNET_SLOT_ORIGIN_MS
 );
-
-// Mint accrued MAGIC to user's wallet — auth required
-const { cardano_tx_hash } = await phoenix.wallet.claimMagic();
 ```
+
+> MAGIC is not minted to a wallet: the old `claimMagic()` (`POST /wallet/magic/claim`)
+> was removed in 0.8.0 because the server always answers `410 MAGIC_CLAIM_DEPRECATED`.
+> Read the MAGIC balance from `getBalance()` / the Wakeme vault instead.
 
 ---
 
 ## Step 6 — Wakeme (vault LAMP → MAGIC → vesting)
 
-Wakeme is one name for what used to be three: *Activation*, *GetLAMP* and
-*GetMAGIC*. It runs under `/wakeme/*`.
+Wakeme is one name for what used to be two: *Activation* and *GetLAMP*. It runs
+under `/wakeme/*`. The old *GetMAGIC* module (buy CARP with fiat) no longer
+exists: the server answers `410 GETMAGIC_MODULE_RETIRED` since 2026-09-14 and the
+SDK removed `quoteMagic` / `checkoutMagic` / `getMagicOrder` in 0.8.0 (see
+`CHANGELOG.md`).
 
 ```ts
 // 1. how much would a new user get right now?
