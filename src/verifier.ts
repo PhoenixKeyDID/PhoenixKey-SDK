@@ -385,6 +385,32 @@ export type AppTokenVerifierConfig = {
   phoenixkeyApiUrl?: string;
   /** TTL for in-memory JWKS cache, ms. Default: 1 hour (matches server `Cache-Control`). */
   jwksCacheTtlMs?: number;
+  /**
+   * Key pinning: RFC 7638 SHA-256 thumbprints (base64url, 43 chars) of the
+   * JWKs you trust. Compute them with {@link ed25519JwkThumbprint}, from a
+   * JWKS you checked OUT OF BAND (not from the same HTTPS fetch the verifier
+   * makes).
+   *
+   * When set, any JWK in the downloaded JWKS whose thumbprint is not listed is
+   * ignored, and a token whose `kid` points only at such a key is rejected
+   * with `jwks_key_not_pinned` — there is no fallback to another key.
+   *
+   * Why: TLS ends at the CDN edge. A bad or coerced CDN can serve a JWKS with
+   * an extra attacker `kid`, and the attacker then mints `app_token`s for any
+   * DID. Pinning takes the CDN (and the network path) out of the trust base
+   * for key selection.
+   *
+   * An empty array is a configuration error and throws at construction: an
+   * empty list that silently let everything through would look identical to
+   * "pinned". Omit the option to keep the legacy trust-the-JWKS behaviour
+   * (a one-time warning is emitted on first use).
+   */
+  pinnedJwkThumbprints?: string[];
+  /**
+   * Receives the one-time "no key pinning" warning. Default: `console.warn`.
+   * Pass your own logger, or `() => {}` to acknowledge the risk and silence it.
+   */
+  onWarning?: (message: string) => void;
 };
 
 type Jwk = { kty: string; crv: string; x: string; use?: string; alg?: string; kid?: string };
@@ -392,6 +418,46 @@ type Jwks = { keys: Jwk[] };
 type JwtHeader = { alg: string; kid?: string; typ?: string };
 
 const DEFAULT_JWKS_CACHE_TTL = 60 * 60 * 1000;
+
+/** SHA-256 digest, base64url without padding = always 43 chars. */
+const THUMBPRINT_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * RFC 7638 JWK thumbprint (SHA-256, base64url) of an OKP/Ed25519 public JWK.
+ *
+ * Hashes the UTF-8 bytes of `{"crv":"Ed25519","kty":"OKP","x":"<x>"}` — the
+ * required members only, in lexicographic order, no whitespace. `kid`, `use`
+ * and `alg` do NOT enter the hash, so the thumbprint identifies the key
+ * material and cannot be reassigned by relabelling.
+ *
+ * Throws `PhoenixKeyError` (`invalid_jwk`) if the input is not an Ed25519 OKP
+ * JWK with a base64url `x`.
+ *
+ * ```ts
+ * ed25519JwkThumbprint({ kty: "OKP", crv: "Ed25519", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" })
+ * // → "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"   (RFC 8037 Appendix A.3)
+ * ```
+ */
+export function ed25519JwkThumbprint(jwk: { kty: string; crv: string; x: string }): string {
+  if (
+    jwk === null ||
+    typeof jwk !== "object" ||
+    jwk.kty !== "OKP" ||
+    jwk.crv !== "Ed25519" ||
+    typeof jwk.x !== "string" ||
+    !/^[A-Za-z0-9_-]+$/.test(jwk.x)
+  ) {
+    throw new PhoenixKeyError({
+      status: 0,
+      code: "invalid_jwk",
+      message: "ed25519JwkThumbprint expects an OKP/Ed25519 JWK with a base64url 'x'",
+    });
+  }
+  // Built by hand, not JSON.stringify(jwk): the member order and the absence
+  // of other members are exactly what RFC 7638 §3.2 pins down.
+  const canonical = `{"crv":"Ed25519","kty":"OKP","x":"${jwk.x}"}`;
+  return bytesToBase64Url(sha256(new TextEncoder().encode(canonical)));
+}
 
 /**
  * Đường mặc định tới JWKS — GỒM context-path `/api/v1`.
@@ -432,11 +498,46 @@ export const JWKS_PATH = "/.well-known/jwks.json";
 export class AppTokenVerifier {
   private readonly phoenixkeyApiUrl: string;
   private readonly jwksCacheTtl: number;
+  private readonly pinned: ReadonlySet<string> | null;
+  private readonly onWarning: (message: string) => void;
+  private warnedUnpinned = false;
   private cachedJwks: { jwks: Jwks; expiresAt: number } | null = null;
 
   constructor(config: AppTokenVerifierConfig = {}) {
     this.phoenixkeyApiUrl = (config.phoenixkeyApiUrl ?? DEFAULT_PHOENIXKEY_API_URL).replace(/\/+$/, "");
     this.jwksCacheTtl = config.jwksCacheTtlMs ?? DEFAULT_JWKS_CACHE_TTL;
+    this.onWarning = config.onWarning ?? ((m) => console.warn(m));
+
+    // `undefined` = not pinning (legacy). ANY other value must be a valid,
+    // non-empty list — `null`, `[]`, a string or a malformed entry throws
+    // here rather than degrading to "no pinning" while looking pinned.
+    const pins = config.pinnedJwkThumbprints;
+    if (pins === undefined) {
+      this.pinned = null;
+    } else {
+      if (!Array.isArray(pins) || pins.length === 0) {
+        throw new PhoenixKeyError({
+          status: 0,
+          code: "invalid_pinned_thumbprints",
+          message:
+            "pinnedJwkThumbprints must be a non-empty array of RFC 7638 thumbprints. " +
+            "An empty list would accept nothing (or, worse, be mistaken for 'pinned'); " +
+            "omit the option to run without pinning.",
+        });
+      }
+      for (const t of pins) {
+        if (typeof t !== "string" || !THUMBPRINT_PATTERN.test(t)) {
+          throw new PhoenixKeyError({
+            status: 0,
+            code: "invalid_pinned_thumbprints",
+            message:
+              "pinnedJwkThumbprints entries must be 43-char base64url SHA-256 thumbprints " +
+              "(see ed25519JwkThumbprint)",
+          });
+        }
+      }
+      this.pinned = new Set(pins);
+    }
   }
 
   /**
@@ -561,6 +662,14 @@ export class AppTokenVerifier {
 
   private async resolvePubkey(kid: string | undefined): Promise<Uint8Array> {
     const jwks = await this.getJwks();
+    if (this.pinned === null && !this.warnedUnpinned) {
+      this.warnedUnpinned = true;
+      this.onWarning(
+        "[PhoenixKey AppTokenVerifier] No key pinning: signing keys are trusted from the JWKS " +
+          "fetched over HTTPS. A CDN or network path that serves an extra kid lets an attacker " +
+          "mint app_tokens. Set pinnedJwkThumbprints (see ed25519JwkThumbprint).",
+      );
+    }
     // `kid` is required. The old fallback to `keys[0]` meant a token carrying
     // no `kid` was checked against whichever key happened to come first in a
     // JSON array served by the API — so the outcome depended on the server's
@@ -575,7 +684,25 @@ export class AppTokenVerifier {
         message: "app_token header is missing kid — cannot select a JWKS key",
       });
     }
-    const key = jwks.keys.find((k) => k.kid === kid);
+    let candidates = jwks.keys;
+    if (this.pinned !== null) {
+      const pinned = this.pinned;
+      // Filter BEFORE selecting by kid, so a duplicate kid planted ahead of
+      // the real key cannot shadow it, and a key that is not pinned is never
+      // a candidate at all.
+      candidates = jwks.keys.filter((k) => isPinned(k, pinned));
+      if (!candidates.some((k) => k.kid === kid) && jwks.keys.some((k) => k.kid === kid)) {
+        throw new PhoenixKeyError({
+          status: 0,
+          code: "jwks_key_not_pinned",
+          message:
+            `JWKS key kid=${kid} is not in pinnedJwkThumbprints — refusing to use it. ` +
+            `If PhoenixKey rotated its signing key, verify the new JWKS out of band and ` +
+            `add its thumbprint; otherwise the JWKS you were served may be forged.`,
+        });
+      }
+    }
+    const key = candidates.find((k) => k.kid === kid);
     if (!key) {
       throw new PhoenixKeyError({
         status: 0,
@@ -630,6 +757,28 @@ export class AppTokenVerifier {
     this.cachedJwks = { jwks, expiresAt: Date.now() + this.jwksCacheTtl };
     return jwks;
   }
+}
+
+function isPinned(key: Jwk, pinned: ReadonlySet<string>): boolean {
+  try {
+    return pinned.has(ed25519JwkThumbprint(key));
+  } catch {
+    // Not an Ed25519 OKP JWK (or malformed): it can never match a pin.
+    return false;
+  }
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  const b64 =
+    typeof btoa === "function"
+      ? btoa(bin)
+      : (globalThis as { Buffer: { from(s: string, enc: string): { toString(enc: string): string } } }).Buffer.from(
+          bin,
+          "binary",
+        ).toString("base64");
+  return b64.replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
 function splitToken(token: string): {

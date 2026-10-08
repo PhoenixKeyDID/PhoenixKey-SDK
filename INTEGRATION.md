@@ -311,6 +311,20 @@ Mã lỗi phân biệt được, đều là `PhoenixKeyError`: `unauthorized` (4
 
 > ⚠ **`app_token` là thẻ mang-là-dùng (bearer).** Chưa có ràng buộc sở-hữu-khoá (DPoP) — xem mục 6. Ai cầm được chuỗi thẻ thì dùng được thẻ, nguyên vẹn tới `exp`, không cần chứng minh gì thêm. Nên: **không ghi vào log**, không đặt vào URL, không cất `localStorage` — giữ trong bộ nhớ tiến trình, và xin thẻ mới thay vì kéo dài một thẻ.
 
+**Ghim khoá ký (`pinnedJwkThumbprints`).** Mặc định `AppTokenVerifier` tin mọi khoá trong JWKS tải về. TLS kết thúc ở mép CDN: một CDN xấu hoặc bị ép có thể trả JWKS kèm một `kid` của kẻ tấn công, và kẻ đó tự đúc `app_token` cho bất kỳ DID nào. Ghim thumbprint RFC 7638 (SHA-256, base64url) của khoá bạn đã kiểm **ngoài băng** (không phải từ chính lượt tải HTTPS của verifier):
+
+```bash
+jq -cj '.keys[0] | {crv, kty, x}' jwks.json | openssl dgst -sha256 -binary \
+  | openssl base64 -A | tr '+/' '-_' | tr -d '='
+```
+
+```ts
+const verifier = new AppTokenVerifier({ pinnedJwkThumbprints: ["<thumbprint>"] });
+// hoặc tính trong mã: ed25519JwkThumbprint({ kty: "OKP", crv: "Ed25519", x })
+```
+
+Khoá nào thumbprint không có trong danh sách thì bị bỏ qua; thẻ có `kid` trỏ tới khoá đó bị từ chối với mã `jwks_key_not_pinned`, **không** chuyển sang khoá khác. Danh sách rỗng `[]` là cấu hình sai → ném lỗi ngay lúc khởi tạo (`invalid_pinned_thumbprints`). Không đặt tuỳ chọn thì giữ hành vi cũ, kèm đúng một `console.warn` mỗi instance (đổi nơi nhận bằng `onWarning`). Khi PhoenixKey xoay khoá ký: kiểm JWKS mới ngoài băng và thêm thumbprint mới vào danh sách TRƯỚC khi khoá cũ nghỉ.
+
 ### 4.2 Nối một trang web bên thứ ba — vòng đầy đủ
 
 Năng lực: người dùng mở trang của bạn, quét QR bằng app PhoenixKey, duyệt bằng
