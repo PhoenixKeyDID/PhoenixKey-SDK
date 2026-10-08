@@ -219,6 +219,33 @@ Two things follow for integrators:
 If you built your own verification path instead of using this SDK, check that it
 reads `status` — reading only `public_key_hex` accepts revoked keys.
 
+### Many devices, one DID — pass the signing key to `verifyIntent`
+
+A DID can hold several `owner` keys at once (one per device). Without a key hint the
+verifier can only ask the server for the **newest** owner key, so a signature made on
+the user's other device comes back `signature_invalid`. The sign-request `signed` SSE
+event already carries `public_key_hex`; forward it:
+
+```ts
+const r = await verifier.verifyIntent({
+  user_did,
+  intent,
+  signature,
+  public_key_hex,   // from the "signed" event — optional, backward compatible
+});
+```
+
+With the hint the verifier calls `GET /identity/{did}/pubkey?key=<hex>`, then applies
+the same gates as before (`status === "active"`) plus `key_role === "owner"` (this
+lookup returns manager/viewer keys too, which must not be able to sign intents).
+The hex is only a *lookup hint*: the signature is checked against the key the server
+returns for that exact (DID, key) pair. A 404 fails the verification
+(`resolve_failed`) — it never falls back to the newest key. The cache is keyed by
+(DID, key), so two devices never share an entry.
+
+`verifyAuthProof` has no such hint yet: the login proof does not carry the signing
+key, so it still verifies against the newest owner key only.
+
 ---
 
 ## Step 5 — Wallet & MAGIC accrual (v0.3.0+)

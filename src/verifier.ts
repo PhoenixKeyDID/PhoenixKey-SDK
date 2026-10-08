@@ -68,6 +68,21 @@ export type VerifyIntentRequest = {
   user_did: string;
   intent: SignIntent;
   signature: string;
+  /**
+   * Hex khoá công khai đã ký — chính là `public_key_hex` trong event SSE
+   * `signed` (kiểu `SignedEventData`). Tuỳ chọn.
+   *
+   * Một DID có thể có NHIỀU khoá owner còn hiệu lực cùng lúc (mỗi thiết bị một
+   * khoá). Vắng trường này, verifier chỉ biết hỏi "khoá owner mới nhất" và chữ ký
+   * từ thiết bị còn lại bị coi là sai. Có trường này, verifier hỏi máy chủ đúng
+   * khoá đó (`GET /identity/{did}/pubkey?key=<hex>`) rồi vẫn chạy cổng
+   * `status === "active"` và cổng `key_role === "owner"`.
+   *
+   * Trường này chỉ là GỢI Ý để tra: chữ ký luôn được kiểm trên khoá do máy chủ
+   * trả về cho đúng (DID, khoá) đó, không bao giờ trên chuỗi hex bên gọi đưa.
+   * Máy chủ trả 404 (DID không có khoá này) ⇒ trượt, không rơi về khoá mới nhất.
+   */
+  public_key_hex?: string;
 };
 
 export type VerifyResult = {
@@ -93,6 +108,7 @@ const TIMESTAMP_SKEW_SEC = 60;
 
 export class PhoenixKeyVerifier {
   private readonly phoenixkeyApiUrl: string;
+  /** Khoá bộ đệm = (did, khoá hỏi) — xem {@link cacheKey}. Hai thiết bị cùng DID không được lẫn nhau. */
   private readonly cache = new Map<string, { key: IdentityPubkey; expiresAt: number }>();
   private readonly cacheTtl: number;
   private readonly acceptLegacyEnvelope: boolean;
@@ -155,7 +171,7 @@ export class PhoenixKeyVerifier {
     if (Math.abs(now - req.intent.timestamp) > TIMESTAMP_SKEW_SEC) {
       return { valid: false, user_did: req.user_did, reason: "timestamp_skew" };
     }
-    const resolved = await this.resolveForVerify(req.user_did);
+    const resolved = await this.resolveForVerify(req.user_did, req.public_key_hex);
     if ("failure" in resolved) return resolved.failure;
     return this.verifyWithKey(resolved.key, req.user_did, canonicalJsonBytes(req.intent), req.signature);
   }
@@ -165,15 +181,22 @@ export class PhoenixKeyVerifier {
    *
    * KHÔNG lọc theo trạng thái: trả đúng thứ máy chủ trả, kể cả khoá đã thu hồi.
    * Bên gọi tự quyết. Muốn thứ đã lọc thì dùng {@link resolvePubkey}.
+   *
+   * @param publicKeyHex Vắng ⇒ khoá owner MỚI NHẤT của DID (hành vi cũ). Có ⇒
+   *   bản ghi của ĐÚNG khoá đó (`?key=`), kèm `key_role` và `status`; máy chủ trả
+   *   404 nếu DID không có khoá ấy và lỗi đó được ném ra nguyên vẹn — không bao
+   *   giờ rơi về khoá mới nhất.
    */
-  async resolveKey(userDid: string): Promise<IdentityPubkey> {
-    const cached = this.cache.get(userDid);
+  async resolveKey(userDid: string, publicKeyHex?: string): Promise<IdentityPubkey> {
+    const wanted = normalizeHex(publicKeyHex);
+    const ck = cacheKey(userDid, wanted);
+    const cached = this.cache.get(ck);
     if (cached && cached.expiresAt > Date.now()) return cached.key;
 
-    const key = await this.resolveViaPhoenixKey(userDid);
+    const key = await this.resolveViaPhoenixKey(userDid, wanted);
 
     if (this.cacheTtl > 0) {
-      this.cache.set(userDid, { key, expiresAt: Date.now() + this.cacheTtl });
+      this.cache.set(ck, { key, expiresAt: Date.now() + this.cacheTtl });
     }
     return key;
   }
@@ -185,10 +208,14 @@ export class PhoenixKeyVerifier {
    * (để phân biệt với DID chưa từng tồn tại), nên trả thẳng chuỗi hex ở đây
    * mà không xét trạng thái sẽ khiến bên gọi verify hợp lệ một chữ ký ký
    * bằng khoá đã mất. Cần bản ghi thô thì gọi {@link resolveKey}.
+   *
+   * @param publicKeyHex Xem {@link resolveKey}. Có ⇒ ném thêm `key_role_not_owner`
+   *   nếu khoá đó không phải khoá owner.
    */
-  async resolvePubkey(userDid: string): Promise<string> {
-    const key = await this.resolveKey(userDid);
+  async resolvePubkey(userDid: string, publicKeyHex?: string): Promise<string> {
+    const key = await this.resolveKey(userDid, publicKeyHex);
     assertKeyUsable(key);
+    if (normalizeHex(publicKeyHex) !== undefined) assertOwnerRole(key);
     return key.public_key_hex;
   }
 
@@ -200,10 +227,12 @@ export class PhoenixKeyVerifier {
    */
   private async resolveForVerify(
     userDid: string,
+    publicKeyHex?: string,
   ): Promise<{ key: IdentityPubkey } | { failure: VerifyResult }> {
+    const wanted = normalizeHex(publicKeyHex);
     let key: IdentityPubkey;
     try {
-      key = await this.resolveKey(userDid);
+      key = await this.resolveKey(userDid, wanted);
     } catch (e) {
       return {
         failure: {
@@ -223,6 +252,22 @@ export class PhoenixKeyVerifier {
           reason: key.revoked_at ? `key_revoked: ${key.revoked_at}` : "key_revoked",
         },
       };
+    }
+    if (wanted !== undefined) {
+      // Tra theo khoá cụ thể: máy chủ trả bản ghi của MỌI vai (owner/manager/
+      // viewer), còn đường "mới nhất" thì chỉ bao giờ trả owner. Giữ nguyên bất
+      // biến cũ — chỉ khoá owner ký được intent/đăng nhập — nếu không thì khoá
+      // viewer của một thiết bị phụ nâng được thành quyền owner.
+      if (key.key_role !== "owner") {
+        return {
+          failure: { valid: false, user_did: userDid, reason: "key_role_not_owner" },
+        };
+      }
+      // Phòng máy chủ/proxy trả bản ghi của khoá khác với khoá đã hỏi: chữ ký chỉ
+      // được kiểm trên đúng khoá bên gọi nêu, không trên khoá nào đó "gần đúng".
+      if (normalizeHex(key.public_key_hex) !== wanted) {
+        return { failure: { valid: false, user_did: userDid, reason: "key_mismatch" } };
+      }
     }
     return { key };
   }
@@ -249,8 +294,9 @@ export class PhoenixKeyVerifier {
     }
   }
 
-  private async resolveViaPhoenixKey(userDid: string): Promise<IdentityPubkey> {
-    const url = `${this.phoenixkeyApiUrl}/identity/${encodeURIComponent(userDid)}/pubkey`;
+  private async resolveViaPhoenixKey(userDid: string, publicKeyHex?: string): Promise<IdentityPubkey> {
+    const query = publicKeyHex ? `?key=${encodeURIComponent(publicKeyHex)}` : "";
+    const url = `${this.phoenixkeyApiUrl}/identity/${encodeURIComponent(userDid)}/pubkey${query}`;
     const res = await fetch(url, { headers: { Accept: "application/json" } });
     if (!res.ok) {
       throw new PhoenixKeyError({
@@ -289,6 +335,27 @@ function assertKeyUsable(key: IdentityPubkey): void {
       ? `Owner key was revoked at ${key.revoked_at}`
       : `Owner key is not active (status=${String(key.status)})`,
   });
+}
+
+function assertOwnerRole(key: IdentityPubkey): void {
+  if (key.key_role === "owner") return;
+  throw new PhoenixKeyError({
+    status: 200,
+    code: "key_role_not_owner",
+    message: `Key role is "${String(key.key_role)}", not "owner"`,
+  });
+}
+
+/** Bỏ `0x`, hạ chữ thường — khớp cách máy chủ chuẩn hoá. Rỗng/vắng ⇒ undefined. */
+function normalizeHex(hex: string | undefined): string | undefined {
+  if (hex === undefined || hex === null) return undefined;
+  const s = (hex.startsWith("0x") || hex.startsWith("0X") ? hex.slice(2) : hex).trim().toLowerCase();
+  return s === "" ? undefined : s;
+}
+
+/** Bộ đệm khoá theo (did, khoá hỏi); "latest" cho đường không kèm khoá. */
+function cacheKey(userDid: string, wantedHex: string | undefined): string {
+  return `${userDid}\u0000${wantedHex ?? "latest"}`;
 }
 
 function hexToBytes(hex: string): Uint8Array {
