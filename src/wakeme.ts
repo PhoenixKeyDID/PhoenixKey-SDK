@@ -176,6 +176,44 @@ export type WakemeSubmitResponse = {
   status: string;
 };
 
+// ─── Repin — the owner pins an InstantGen vault to the Wakeme vault ──────────────────
+
+/**
+ * Body of `POST /wakeme/repin/build`. Wire keys are snake_case (the service
+ * runs Jackson `SNAKE_CASE`; server record `RepinBuildRequest`).
+ */
+export type RepinBuildRequest = {
+  /** DID of the vault owner — must be the session's own DID (the service enforces it). */
+  did: string;
+  /**
+   * Optional InstantGen vault to pin, as the asset unit
+   * `<IG vault script hash> ‖ <vault-NFT name>` in hex (58–120 hex chars). This is
+   * the durable identity of an IG vault — its UTxO changes on every MAGIC use.
+   * Absent ⟹ the service looks up the owner's IG vault: exactly one is pinned;
+   * none, or two or more, is an error (it never picks for you).
+   *
+   * Wire key is `gen_vault_ref` (server field `genVaultRef`).
+   */
+  gen_vault_ref?: string;
+};
+
+export type RepinBuildResponse = {
+  unsigned_tx_cbor: string;
+  /** Keys that must sign, in order: `controller_pkh` then the anchor's `device_pkh`. */
+  required_signer_key_hashes: string[];
+  /** The Wakeme vault UTxO being spent, `txhash#ix` — a plain string, not an object. */
+  vault_utxo: string;
+  /** Script hash of the InstantGen vault that will be pinned. */
+  gen_vault_hash: string;
+  /** Vault-NFT name of the InstantGen vault that will be pinned. */
+  gen_vault_name: string;
+  /** Period written to datum cell 12 `gen_pin_period` (= period(validTo)). */
+  gen_pin_period: number;
+  ttl_slot: number;
+  /** Fee in lovelace read from the transaction body; Feecover pays it. */
+  fee_lovelace: number;
+};
+
 /** Anti-wash gate — spending real MAGIC through the Registry is what counts. */
 export type WakemeActivityGate = {
   used_this_period: boolean | null;
@@ -406,6 +444,35 @@ export class WakemeModule {
   /** Step 2 — hand back the Enclave-signed CBOR for submission to the chain. */
   async submitGetLamp(signedTxCbor: string): Promise<WakemeSubmitResponse> {
     return this.fetch<WakemeSubmitResponse>("/wakeme/submit", {
+      method: "POST",
+      body: JSON.stringify({ signed_tx_cbor: signedTxCbor }),
+      bearerToken: this.requireToken(),
+    } as FetchOptions);
+  }
+
+  /**
+   * Repin step 1 — ask the server for an unsigned transaction that pins the
+   * owner's InstantGen vault into the Wakeme vault (cell 11 `gen_vault`).
+   *
+   * Only works on v5b vaults. On a v6 vault the service answers **9501**
+   * ("not yet implemented") with a user-facing message. The server error message
+   * is passed through unchanged. Sign with the keys in
+   * `required_signer_key_hashes`, then pass the CBOR to {@link repinSubmit}.
+   */
+  async repinBuild(req: RepinBuildRequest): Promise<RepinBuildResponse> {
+    return this.fetch<RepinBuildResponse>("/wakeme/repin/build", {
+      method: "POST",
+      body: JSON.stringify(req),
+      bearerToken: this.requireToken(),
+    } as FetchOptions);
+  }
+
+  /**
+   * Repin step 2 — hand back the signed CBOR (controller + device); Feecover
+   * signs the fee. Same body and result shape as {@link submitGetLamp}.
+   */
+  async repinSubmit(signedTxCbor: string): Promise<WakemeSubmitResponse> {
+    return this.fetch<WakemeSubmitResponse>("/wakeme/repin/submit", {
       method: "POST",
       body: JSON.stringify({ signed_tx_cbor: signedTxCbor }),
       bearerToken: this.requireToken(),

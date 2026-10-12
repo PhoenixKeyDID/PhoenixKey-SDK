@@ -247,3 +247,72 @@ describe("redeemer indices — hợp đồng nhị phân với validator wakeme_
     expect(src).toContain(`\`${line}\``);
   });
 });
+
+describe("WakemeModule — Repin (POST /wakeme/repin/{build,submit})", () => {
+  const DID = "did:phoenix:aaaaaaaiusdea:ab";
+  const REPIN_RESULT = {
+    unsigned_tx_cbor: "84a40081",
+    required_signer_key_hashes: ["aa".repeat(28), "bb".repeat(28)],
+    vault_utxo: `${"cd".repeat(32)}#0`,
+    gen_vault_hash: "ee".repeat(28),
+    gen_vault_name: "01",
+    gen_pin_period: 7,
+    ttl_slot: 123456,
+    fee_lovelace: 190000,
+  };
+
+  it("repinBuild POSTs /wakeme/repin/build with the Bearer and the snake_case body", async () => {
+    const f = mockOk(REPIN_RESULT);
+    const out = await mod().repinBuild({ did: DID, gen_vault_ref: "ab".repeat(30) });
+    expect(calls[0]).toBe(`${BASE}/wakeme/repin/build`);
+    const init = f.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(String(init.body))).toEqual({ did: DID, gen_vault_ref: "ab".repeat(30) });
+    expect(out).toEqual(REPIN_RESULT);
+  });
+
+  it("repinBuild omits gen_vault_ref when the caller gives none", async () => {
+    const f = mockOk(REPIN_RESULT);
+    await mod().repinBuild({ did: DID });
+    const init = f.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({ did: DID });
+  });
+
+  it("repinBuild and repinSubmit refuse with no session, before any network call", async () => {
+    mockOk();
+    await expect(mod(null).repinBuild({ did: DID })).rejects.toThrow("Not authenticated");
+    await expect(mod(null).repinSubmit("deadbeef")).rejects.toThrow("Not authenticated");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("repinBuild surfaces the server's own message on an error response", async () => {
+    const sentence = "Repin két v6 chưa hỗ trợ — vui lòng chờ bản cập nhật.";
+    jest.spyOn(globalThis, "fetch").mockImplementation((async () =>
+      new Response(JSON.stringify({ code: 9501, message: sentence }), {
+        status: 501,
+        headers: { "Content-Type": "application/json" },
+      })) as unknown as typeof fetch);
+    const err = await mod()
+      .repinBuild({ did: DID })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(PhoenixKeyError);
+    expect((err as PhoenixKeyError).message).toBe(sentence);
+    expect((err as PhoenixKeyError).status).toBe(501);
+  });
+
+  it("repinSubmit POSTs /wakeme/repin/submit with Bearer + signed_tx_cbor and returns the submit shape", async () => {
+    const result = { cardano_tx_hash: "ff".repeat(32), vault_address: "addr_test1vault", status: "SUBMITTED" };
+    const f = mockOk(result);
+    const out = await mod().repinSubmit("deadbeef");
+    expect(calls[0]).toBe(`${BASE}/wakeme/repin/submit`);
+    const init = f.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(String(init.body))).toEqual({ signed_tx_cbor: "deadbeef" });
+    expect(out).toEqual(result);
+  });
+});
