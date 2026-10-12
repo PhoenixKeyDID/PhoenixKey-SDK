@@ -58,6 +58,8 @@ export type {
   WakemeBuildRequest,
   WakemeBuildResponse,
   WakemeSubmitResponse,
+  RepinBuildRequest,
+  RepinBuildResponse,
   WakemeActivityGate,
   WakemeVaultStatus,
   WakemeVaultMagic,

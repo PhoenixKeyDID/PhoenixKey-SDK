@@ -2,6 +2,18 @@
 
 Dạng đánh số: trước 1.0, thay đổi phá vỡ tương thích tăng số minor (tiền lệ: 0.6.1 → 0.7.0, #34).
 
+## 0.9.1
+
+### Thêm
+
+- Added: `WakemeModule.repinBuild` / `repinSubmit` (`POST /wakeme/repin/build`, `/wakeme/repin/submit`). Repin only works on v5b vaults; on v6 the service returns 9501. Kiểu mới: `RepinBuildRequest`, `RepinBuildResponse`; `repinSubmit` dùng lại `WakemeSubmitResponse`.
+
+### Sửa
+
+- `FeesModule.estimate()`, `NetworkModule.getNodes()` và `SupportModule.initSession()` nay gửi `Authorization: Bearer <session_token>`. Trước đây ba hàm gọi `GET /tx/estimate`, `GET /identity/nodes` và `POST /support/session/init` không kèm token, trong khi cả ba route đều nằm ngoài các danh sách công khai của `AuthRequiredInterceptor` (PhoenixKey-Database) ⟹ mọi lần gọi nhận **401** (mã 1304, "Missing Bearer token"; đo trên Preprod 2026-10-12 cho hai route đầu). Không có token thì mỗi hàm ném `Error("Not authenticated")`, không đi mạng.
+- Docstring của `FeesModule.estimate()` từng ghi "Public — không cần auth"; đã sửa.
+- Constructor của ba module nhận thêm tham số thứ hai `getSessionToken: () => string | null`, giống `WalletModule`. Dùng qua `PhoenixKeyClient` thì không phải làm gì: `client.fees`, `client.network`, `client.support` đã được nối sẵn với phiên. Chỉ ai tự `new FeesModule(baseUrl)` / `new NetworkModule(baseUrl)` / `new SupportModule(baseUrl)` mới phải truyền thêm getter.
+
 ## 0.9.0
 
 ### Sửa
