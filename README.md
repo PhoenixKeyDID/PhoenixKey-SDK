@@ -257,9 +257,12 @@ import {
   WalletModule,
 } from "@phoenixkeydid/phoenixkey-sdk";
 
-// Server-snapshot balance — public endpoint, no auth needed
+// Server-snapshot balance — needs the session of the SAME DID (Bearer token);
+// throws "Not authenticated" without one, and the server answers 401 for any other DID.
+// The server route is deprecated: prefer `wallet.getAll(userDid)` (wallets + MAGIC + vault).
 const balance = await phoenix.wallet.getBalance(userDid);
-// → { balance_lovelace, balance_lamp, balance_magic, magic_accrued, magic_rate_per_slot, last_accrual_slot, current_slot }
+// → { balance_lovelace, balance_lamp, balance_carp, balance_magic, magic_accrued, magic_rate_per_slot, last_accrual_slot, current_slot }
+// Large quantities are decimal STRINGS on the wire (BigInt(balance.balance_lamp)); slots are numbers.
 
 // UI tick between polls — extrapolate MAGIC accrual since `last_accrual_slot`
 const liveMagic = WalletModule.extrapolateAccrued(
@@ -271,7 +274,8 @@ const liveMagic = WalletModule.extrapolateAccrued(
 
 > MAGIC is not minted to a wallet: the old `claimMagic()` (`POST /wallet/magic/claim`)
 > was removed in 0.8.0 because the server always answers `410 MAGIC_CLAIM_DEPRECATED`.
-> Read the MAGIC balance from `getBalance()` / the Wakeme vault instead.
+> Read the MAGIC balance from `wallet.getAll()` (`magic`) / the Wakeme vault instead —
+> the deprecated balance route always returns its MAGIC fields as `0` / `""`.
 
 ---
 

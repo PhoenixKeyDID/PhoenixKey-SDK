@@ -130,3 +130,148 @@ describe("paymentKeyHashFromAddress — bech32 checksum (BIP-173)", () => {
     expect(() => paymentKeyHashFromAddress("notbech32")).toThrow(/separator|checksum/);
   });
 });
+
+// ─── Auth on balance / all reads ─────────────────────────────────────────────
+// Server: WalletController.balance and getAllWallets both call requireSelfDid
+// and need a Bearer session — an unauthenticated call is always 401.
+
+const WBASE = "https://api.example.test/api/v1";
+const WTOKEN = "session-token";
+const WDID = "did:phoenix:aaaaaaahl4nn6:" + "ab".repeat(32);
+
+type Recorded = { url: string; headers: Headers };
+const recorded: Recorded[] = [];
+
+function mockWalletOk(result: unknown) {
+  recorded.length = 0;
+  return jest.spyOn(globalThis, "fetch").mockImplementation((async (
+    url: string,
+    init?: RequestInit,
+  ) => {
+    recorded.push({ url: String(url), headers: new Headers(init?.headers) });
+    return new Response(JSON.stringify({ code: 1000, message: "ok", result }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as unknown as typeof fetch);
+}
+
+describe("WalletModule.getBalance — Bearer required", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("sends Authorization: Bearer <token> and keeps string quantities", async () => {
+    const spy = mockWalletOk({
+      address: "addr_test1qz",
+      balance_lovelace: "5000000",
+      balance_lamp: "36000000000000000",
+      balance_carp: "0",
+      balance_magic: "0",
+      magic_accrued: "0",
+      magic_rate_per_slot: "",
+      last_accrual_slot: 0,
+      current_slot: 123,
+    });
+    const w = new WalletModule(WBASE, () => WTOKEN);
+    const b = await w.getBalance(WDID);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(recorded[0].headers.get("Authorization")).toBe(`Bearer ${WTOKEN}`);
+    expect(recorded[0].url).toBe(`${WBASE}/wallet/${encodeURIComponent(WDID)}/balance`);
+    expect(b.balance_lamp).toBe("36000000000000000");
+    expect(BigInt(b.balance_lamp)).toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER));
+  });
+
+  it("throws Not authenticated without a token and never calls the network", async () => {
+    const spy = mockWalletOk({});
+    const w = new WalletModule(WBASE, () => null);
+    await expect(w.getBalance(WDID)).rejects.toThrow("Not authenticated");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("resolveOwnerPkh needs the session too (no network without a token)", async () => {
+    const spy = mockWalletOk({});
+    const w = new WalletModule(WBASE, () => null);
+    await expect(w.resolveOwnerPkh(WDID)).rejects.toThrow("Not authenticated");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("resolveOwnerPkh returns the payment key hash when the session is valid", async () => {
+    mockWalletOk({ address: addr("addr_test", 6, 0, PAY_PKH), balance_lovelace: "0" });
+    const w = new WalletModule(WBASE, () => WTOKEN);
+    await expect(w.resolveOwnerPkh(WDID)).resolves.toBe(PAY_HEX);
+    expect(recorded[0].headers.get("Authorization")).toBe(`Bearer ${WTOKEN}`);
+  });
+});
+
+describe("WalletModule.getAll — GET /wallet/{did}/all", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  const ALL = {
+    wallets: [
+      {
+        kind: "phoenix",
+        addresses: { fixed: "addr_test1qfixed" },
+        balances: { lovelace: "2000000", lamp: "1000", carp: "0" },
+      },
+      {
+        kind: "standard",
+        addresses: { fixed: "addr_test1qs", active: "addr_test1qa", stake: "stake_test1u" },
+        balances: { lovelace: "0", lamp: "0", carp: "7" },
+      },
+    ],
+    magic: {
+      source: "unwired",
+      available: null,
+      accrued: null,
+      expired: null,
+      vault_count: null,
+      magic_absent_reason: "NOT_CONFIGURED",
+    },
+    vault: null,
+    vault_absent_reason: "SERVED_BY_WAKEME_SERVICE",
+  };
+
+  it("calls /wallet/<did>/all with Bearer and returns the server shape", async () => {
+    mockWalletOk(ALL);
+    const w = new WalletModule(WBASE, () => WTOKEN);
+    const r = await w.getAll(WDID);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].url).toBe(`${WBASE}/wallet/${encodeURIComponent(WDID)}/all`);
+    expect(recorded[0].headers.get("Authorization")).toBe(`Bearer ${WTOKEN}`);
+    expect(r).toEqual(ALL);
+    expect(r.wallets[1].addresses.stake).toBe("stake_test1u");
+    expect(r.magic.source).toBe("unwired");
+    expect(r.vault).toBeNull();
+    expect(r.vault_absent_reason).toBe("SERVED_BY_WAKEME_SERVICE");
+  });
+
+  it("returns a populated vault block with string quantities", async () => {
+    const vault = {
+      owned_lamp: "1",
+      conditional_lamp: "1001000000",
+      reclaimed_to_pot: "0",
+      d_unit: "1000000",
+    };
+    mockWalletOk({ ...ALL, vault, vault_absent_reason: null });
+    const r = await new WalletModule(WBASE, () => WTOKEN).getAll(WDID);
+    expect(r.vault).toEqual(vault);
+    expect(r.vault_absent_reason).toBeNull();
+  });
+
+  it("throws Not authenticated without a token and never calls the network", async () => {
+    const spy = mockWalletOk(ALL);
+    await expect(new WalletModule(WBASE, () => null).getAll(WDID)).rejects.toThrow(
+      "Not authenticated",
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("encodes a DID with special characters in the path", async () => {
+    mockWalletOk(ALL);
+    const odd = "did:phoenix:a/b?c#d e";
+    await new WalletModule(WBASE, () => WTOKEN).getAll(odd);
+    expect(recorded[0].url).toBe(`${WBASE}/wallet/did%3Aphoenix%3Aa%2Fb%3Fc%23d%20e/all`);
+    mockWalletOk({ address: null });
+    await new WalletModule(WBASE, () => WTOKEN).getBalance(odd);
+    expect(recorded[0].url).toBe(`${WBASE}/wallet/did%3Aphoenix%3Aa%2Fb%3Fc%23d%20e/balance`);
+  });
+});

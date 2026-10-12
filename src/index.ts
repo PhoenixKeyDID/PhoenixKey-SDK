@@ -38,7 +38,17 @@ export type { FeeType } from "./fees";
 export { NetworkModule } from "./network";
 export { SupportModule } from "./support";
 export { WalletModule, PREPROD_SLOT_ORIGIN_MS, MAINNET_SLOT_ORIGIN_MS, paymentKeyHashFromAddress } from "./wallet";
-export type { Balance } from "./wallet";
+export type {
+  Balance,
+  WalletsAll,
+  WalletEntry,
+  WalletAddresses,
+  WalletBalances,
+  MagicAccount,
+  MagicAbsentReason,
+  VaultLamp,
+  VaultAbsentReason,
+} from "./wallet";
 export {
   WakemeModule,
   WAKEME_SPEND_REDEEMER_INDEX,

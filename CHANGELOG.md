@@ -2,6 +2,23 @@
 
 Dạng đánh số: trước 1.0, thay đổi phá vỡ tương thích tăng số minor (tiền lệ: 0.6.1 → 0.7.0, #34).
 
+## 0.9.0
+
+### Sửa
+
+- `WalletModule.getBalance()` nay gửi `Authorization: Bearer <session_token>`. Trước đây hàm gọi `GET /wallet/{did}/balance` không kèm token, trong khi máy chủ ép Bearer và chỉ cho đọc ví của chính DID trong phiên (`WalletController.balance` → `requireSelfDid`, PhoenixKey-Database `5a587312`) ⟹ mọi lần gọi đều nhận **401**. Không có token thì hàm ném `Error("Not authenticated")`, không đi mạng. `resolveOwnerPkh()` đi qua `getBalance()` nên cũng cần phiên của chính DID đó.
+- `getBalance()` được đánh dấu `@deprecated`: route máy chủ là `@Deprecated(forRemoval = true)` và năm trường MAGIC của nó luôn là `0`/`""`.
+
+### Thêm
+
+- `WalletModule.getAll(did)` gọi `GET /wallet/{did}/all` (Bearer, chính chủ): cả ví Phoenix lẫn Standard, khối `magic` và khối LAMP trong két Wakeme trong một lần gọi. Xuất thêm các kiểu `WalletsAll`, `WalletEntry`, `WalletAddresses`, `WalletBalances`, `MagicAccount`, `MagicAbsentReason`, `VaultLamp`, `VaultAbsentReason`.
+
+### Phá vỡ tương thích (mức kiểu)
+
+- Kiểu `Balance`: `balance_lovelace`, `balance_lamp`, `balance_magic`, `magic_accrued` đổi từ `number` sang `string`, thêm `balance_carp: string`. Đây là hình thật trên dây: máy chủ serialize các số này thành chuỗi thập phân (`WalletDtos.BalanceResponse`, `ToStringSerializer`) vì LAMP tính bằng oildrop vượt `Number.MAX_SAFE_INTEGER`. Kiểu cũ khai sai; lúc chạy, các trường này vốn đã là chuỗi.
+
+**Việc cần làm khi nâng cấp.** Chỗ nào làm toán trên các trường trên thì đổi sang `BigInt(value)`. Chỗ nào gọi `getBalance()` thì cấp `getSessionToken` cho client, hoặc chuyển sang `getAll()`.
+
 ## 0.8.0
 
 ### Gỡ (phá vỡ tương thích)
