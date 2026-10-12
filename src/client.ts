@@ -185,9 +185,9 @@ export class PhoenixKeyClient {
       boundSession.getSessionToken,
     );
 
-    this.fees = new FeesModule(this.config.apiBaseUrl);
-    this.network = new NetworkModule(this.config.apiBaseUrl);
-    this.support = new SupportModule(this.config.apiBaseUrl);
+    this.fees = new FeesModule(this.config.apiBaseUrl, boundSession.getSessionToken);
+    this.network = new NetworkModule(this.config.apiBaseUrl, boundSession.getSessionToken);
+    this.support = new SupportModule(this.config.apiBaseUrl, boundSession.getSessionToken);
     this.wallet = new WalletModule(this.config.apiBaseUrl, boundSession.getSessionToken);
     this.wakeme = new WakemeModule(
       this.config.apiBaseUrl,
