@@ -3,10 +3,10 @@
  *
  * Wakeme is the single name for what used to be split across "Activation"
  * and "GetLAMP". (A third piece, "GetMAGIC", was removed from the server on
- * 2026-09-14 and from this SDK in 0.8.0 — see CHANGELOG.md.) The server serves
- * it under `/wakeme/*`; the older
- * `/activation/*` paths are aliases of the same handlers and are on their way
- * out (`WakemeController`, PhoenixKey-Database).
+ * 2026-09-14 and from this SDK in 0.8.0 — see CHANGELOG.md.) The routes are
+ * `/wakeme/*`, served by the separate Wakeme service; `PhoenixKey-Database` no
+ * longer binds them. The older `/activation/*` paths are not aliases any more —
+ * no controller binds them (see the legacy block further down in this module).
  *
  * ## The keyless vault (v3)
  *
