@@ -260,3 +260,63 @@ def test_key_role_helpers_fail_safe():
     assert key_role_from_claim("root") == "viewer"
     assert key_role_from_claim(1) == "viewer"
     assert key_role_at_least("owner", "manager") and not key_role_at_least("viewer", "manager")
+
+
+# json.loads accepts bare NaN / Infinity / -Infinity; JSON.parse (TypeScript SDK)
+# does not. A token signed by the pinned key with exp=NaN must not pass the
+# expiry gate.
+
+
+def _b64u(b: bytes) -> str:
+    import base64
+
+    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+
+
+def _self_signed_verifier_and_token(exp_text: str):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    sk = Ed25519PrivateKey.generate()
+    raw = sk.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    jwk = {"kty": "OKP", "crv": "Ed25519", "x": _b64u(raw), "kid": "k1"}
+    jwks = json.dumps({"keys": [jwk]}).encode()
+    h = _b64u(b'{"alg":"EdDSA","kid":"k1"}')
+    p = _b64u(('{"exp":%s,"aud":"svc","sub":"did:x","key_role":"owner"}' % exp_text).encode())
+    token = h + "." + p + "." + _b64u(sk.sign((h + "." + p).encode()))
+    v = AppTokenVerifier(
+        "https://x",
+        fetch=lambda u, hh: HttpResponse(200, jwks),
+        clock=lambda: 1_800_000_000,
+        pinned_jwk_thumbprints=[ed25519_jwk_thumbprint(jwk)],
+    )
+    return v, token
+
+
+def test_self_signed_harness_accepts_a_valid_exp_and_rejects_a_past_one():
+    v, token = _self_signed_verifier_and_token("1900000000")
+    assert v.verify(token, "svc").exp == 1900000000
+    v, token = _self_signed_verifier_and_token("1")
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.verify(token, "svc")
+    assert ei.value.code == "token_expired"
+
+
+@pytest.mark.parametrize("exp_text", ["NaN", "Infinity", "-Infinity"])
+def test_signed_token_with_non_standard_json_constant_is_malformed(exp_text):
+    v, token = _self_signed_verifier_and_token(exp_text)
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.verify(token, "svc")
+    assert ei.value.code == "malformed_token"
+
+
+def test_jwks_body_with_non_standard_json_constant_is_not_cached_as_jwks():
+    calls: list[str] = []
+    v = AppTokenVerifier(
+        "https://x",
+        fetch=jwks_fetch({"status": 200, "body": '{"keys": [], "n": NaN}'}, calls),
+        on_warning=lambda m: None,
+    )
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.verify(_valid_case()["token"], _valid_case()["expected_aud"])
+    assert ei.value.code == "jwks_fetch_failed" and len(calls) == 1

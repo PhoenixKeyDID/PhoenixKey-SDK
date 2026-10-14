@@ -300,3 +300,42 @@ def test_default_transport_reports_connection_refused_as_status_zero():
     with pytest.raises(PhoenixKeyError) as ei:
         v.resolve_key("did:a")
     assert ei.value.status == 0 and ei.value.code == "network_error"
+
+
+# A Python str can carry a lone surrogate (json.loads of a JSON string holding
+# "\\ud800" returns one). TextEncoder in the TypeScript SDK maps it to U+FFFD, so
+# both SDKs sign/verify the same bytes and a bad login is a failed result.
+
+
+def test_envelope_encodes_surrogates_like_text_encoder():
+    from phoenixkey_sdk.envelope import encode_legacy_concat, encode_rp_auth_v1
+
+    lone = json.loads('"\\ud800x\\ud83d\\ude00\\udc00"')  # lone, x, pair (joined), lone
+    split_pair = "\ud83d\ude00"  # two code points in one str; TextEncoder joins them
+    want = bytes.fromhex("efbfbd78f09f9880efbfbd")  # TextEncoder output for `lone`
+    v1 = encode_rp_auth_v1(user_did="d", domain=lone, challenge=split_pair, timestamp=1)
+    assert want in v1 and bytes.fromhex("00000004f09f9880") in v1
+    assert encode_legacy_concat(domain="x", challenge=lone, timestamp=1) == want + b":x:1"
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+@pytest.mark.parametrize("field", ["challenge", "domain"])
+def test_auth_proof_lone_surrogate_is_a_failed_result_not_an_exception(field, legacy):
+    pub = "02" + "33" * 32
+    v = PhoenixKeyVerifier(
+        "https://x",
+        fetch=lambda u, h: HttpResponse(200, _record_body(pub)),
+        clock=lambda: 100,
+        accept_legacy_envelope=legacy,
+    )
+    args = {"challenge": "c", "domain": "x", field: json.loads('"a\\ud800b"')}
+    res = v.verify_auth_proof(user_did="d", signature="00" * 64, timestamp=100, **args)
+    assert res.valid is False and res.reason == "signature_invalid" and res.user_did == "d"
+
+
+@pytest.mark.parametrize("sig", [None, 123, b"00" * 64, ["00"]])
+def test_auth_proof_non_string_signature_is_verify_failed_not_an_exception(sig):
+    pub = "02" + "33" * 32
+    v = PhoenixKeyVerifier("https://x", fetch=lambda u, h: HttpResponse(200, _record_body(pub)), clock=lambda: 100)
+    res = v.verify_auth_proof(user_did="d", signature=sig, challenge="c", domain="x", timestamp=100)  # type: ignore[arg-type]
+    assert res.valid is False and res.reason is not None and res.reason.startswith("verify_failed:")

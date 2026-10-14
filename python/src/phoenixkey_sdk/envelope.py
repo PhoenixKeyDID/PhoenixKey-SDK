@@ -15,8 +15,23 @@ RP_AUTH_PREFIX_V1 = "PHOENIXKEY_RP_AUTH:v1\u0000"
 _MAX_SAFE_INTEGER = 2**53 - 1
 
 
+def _utf8(s: str) -> bytes:
+    """UTF-8 bytes exactly as JavaScript's ``TextEncoder`` produces them.
+
+    A Python ``str`` can hold a lone surrogate (``json.loads('"\\ud800"')``
+    returns one) and ``str.encode("utf-8")`` raises on it. ``TextEncoder``
+    replaces each lone surrogate with U+FFFD and joins a high+low pair into one
+    code point; doing the same keeps both SDKs on the same bytes and turns such
+    input into a failed signature check instead of an exception.
+    """
+    try:
+        return s.encode("utf-8")
+    except UnicodeEncodeError:
+        return s.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace").encode("utf-8")
+
+
 def _length_prefixed(s: str) -> bytes:
-    body = s.encode("utf-8")
+    body = _utf8(s)
     return struct.pack(">I", len(body)) + body
 
 
@@ -46,7 +61,7 @@ def encode_rp_auth_v1(*, user_did: str, domain: str, challenge: str, timestamp: 
 
 def encode_legacy_concat(*, domain: str, challenge: str, timestamp: int) -> bytes:
     """The old ``challenge:domain:timestamp`` form. NOT injective -- migration only."""
-    return f"{challenge}:{domain}:{_js_integer_text(timestamp)}".encode("utf-8")
+    return _utf8(f"{challenge}:{domain}:{_js_integer_text(timestamp)}")
 
 
 def _js_integer_text(ts: int | float) -> str:

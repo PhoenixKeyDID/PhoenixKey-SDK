@@ -292,6 +292,8 @@ class PhoenixKeyVerifier:
     def _verify_with_key(
         key: IdentityPubkey, user_did: str, message: bytes, signature_hex: str
     ) -> VerifyResult:
+        if not isinstance(signature_hex, str):
+            return VerifyResult(False, user_did, "verify_failed: signature must be a hex string")
         try:
             sig = hex_to_bytes(signature_hex)
             pub = hex_to_bytes(key.public_key_hex)

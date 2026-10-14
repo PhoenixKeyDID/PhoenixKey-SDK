@@ -128,6 +128,17 @@ def _warn_unpinned(message: str) -> None:
     warnings.warn(message, UserWarning, stacklevel=5)
 
 
+def _reject_json_constant(name: str) -> Any:
+    raise ValueError(f"non-standard JSON constant: {name}")
+
+
+def _strict_json(text: str) -> Any:
+    # json.loads accepts bare NaN / Infinity / -Infinity; JSON.parse in the
+    # TypeScript SDK rejects them. Without this, a signed token whose exp is NaN
+    # passes the expiry gate (every comparison with NaN is False).
+    return json.loads(text, parse_constant=_reject_json_constant)
+
+
 def _malformed(message: str) -> PhoenixKeyError:
     return PhoenixKeyError(status=0, code="malformed_token", message=message)
 
@@ -138,8 +149,8 @@ def _split_token(token: str) -> tuple[dict[str, Any], dict[str, Any], bytes, byt
         raise _malformed("app_token must have exactly 3 JWT segments")
     header_b64, payload_b64, sig_b64 = parts
     try:
-        header = json.loads(_b64url_decode(header_b64).decode("utf-8"))
-        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+        header = _strict_json(_b64url_decode(header_b64).decode("utf-8"))
+        payload = _strict_json(_b64url_decode(payload_b64).decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         raise _malformed("app_token header/payload is not valid JSON") from None
     if not isinstance(header, dict) or not isinstance(payload, dict):
@@ -379,7 +390,7 @@ class AppTokenVerifier:
                 message=f"JWKS fetch failed: HTTP {res.status} at {url}{hint}",
             )
         try:
-            body = json.loads(res.body.decode("utf-8"))
+            body = _strict_json(res.body.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             raise PhoenixKeyError(
                 status=res.status, code="jwks_fetch_failed", message=f"JWKS at {url} returned 200 with a body that is not JSON"
