@@ -356,3 +356,135 @@ def test_pubkey_lookup_body_parsed_strictly(body):
     v = PhoenixKeyVerifier("https://x", fetch=lambda u, h: HttpResponse(200, body), clock=lambda: 100)
     res = v.verify_auth_proof(user_did="d", signature="00" * 64, challenge="c", domain="x", timestamp=100)
     assert res.valid is False and res.reason is not None and res.reason.startswith("resolve_failed:")
+
+
+# ── input that is not what the types promise: a failed result, never a raise ──
+# Every case below ran into AttributeError / RecursionError / OverflowError /
+# TypeError before; the TypeScript SDK reports each as `valid: false`.
+
+_PUB = "02" + "33" * 32
+_NOT_STR = [None, 5, True, 1.5, b"abc", ["a"], {"a": 1}]
+_NOT_STR_IDS = ["none", "int", "bool", "float", "bytes", "list", "dict"]
+
+
+def _verifier_with_key(calls=None):
+    def fetch(url, headers):
+        if calls is not None:
+            calls.append(url)
+        return HttpResponse(200, _record_body(_PUB))
+
+    return PhoenixKeyVerifier("https://x", fetch=fetch, clock=lambda: 100)
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+@pytest.mark.parametrize("bad", _NOT_STR, ids=_NOT_STR_IDS)
+@pytest.mark.parametrize("field", ["challenge", "domain", "user_did"])
+def test_auth_proof_non_string_field_is_verify_failed_not_an_exception(field, bad, legacy):
+    calls: list[str] = []
+    v = PhoenixKeyVerifier(
+        "https://x",
+        fetch=lambda u, h: calls.append(u) or HttpResponse(200, _record_body(_PUB)),
+        clock=lambda: 100,
+        accept_legacy_envelope=legacy,
+    )
+    args = {"user_did": "did:a", "challenge": "c", "domain": "x", field: bad}
+    res = v.verify_auth_proof(signature="00" * 64, timestamp=100, **args)
+    assert res.valid is False
+    assert res.reason is not None and res.reason.startswith(f"verify_failed: {field} must be a string")
+    assert calls == []  # refused before any lookup
+
+
+def _nest(kind: str, depth: int):
+    """Build nesting iteratively -- a literal or recursive builder would itself overflow."""
+    node: object = 1
+    for _ in range(depth):
+        node = [node] if kind == "list" else {"a": node}
+    return node
+
+
+@pytest.mark.parametrize("depth", [600, 200_000])
+@pytest.mark.parametrize("kind", ["list", "dict"])
+def test_intent_deeply_nested_is_a_failed_result_not_recursionerror(kind, depth):
+    intent = {"type": "T", "timestamp": 100, "body": _nest(kind, depth)}
+    res = _verifier_with_key().verify_intent(user_did="did:a", intent=intent, signature="00" * 64)
+    assert res.valid is False
+    assert res.reason == "verify_failed: intent nested too deeply"
+    assert res.user_did == "did:a"
+
+
+def test_intent_nesting_just_inside_the_limit_still_verifies_to_signature_invalid():
+    intent = {"type": "T", "timestamp": 100, "body": _nest("list", 50)}
+    res = _verifier_with_key().verify_intent(user_did="did:a", intent=intent, signature="00" * 64)
+    assert res.valid is False and res.reason == "signature_invalid"
+
+
+_UNSAFE_NUMBERS = [
+    10**400,
+    -(10**400),
+    10**309,
+    2**53 + 1,
+    -(2**53) - 1,
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    json.loads("1e999"),  # json.loads turns this into inf
+    json.loads("1" + "0" * 400),  # a 401-digit integer literal
+]
+
+
+@pytest.mark.parametrize("n", _UNSAFE_NUMBERS, ids=lambda n: repr(n)[:14])
+def test_intent_unsafe_number_is_verify_failed_not_overflowerror(n):
+    for intent in (
+        {"type": "T", "timestamp": 100, "body": {"amount": n}},
+        {"type": "T", "timestamp": 100, "body": [[n]]},
+    ):
+        res = _verifier_with_key().verify_intent(user_did="did:a", intent=intent, signature="00" * 64)
+        assert res.valid is False
+        assert res.reason is not None and res.reason.startswith("verify_failed:")
+
+
+@pytest.mark.parametrize("n", [2**53, -(2**53), 1e300, 0.5])
+def test_intent_numbers_inside_the_safe_range_reach_the_signature_check(n):
+    intent = {"type": "T", "timestamp": 100, "body": {"amount": n}}
+    res = _verifier_with_key().verify_intent(user_did="did:a", intent=intent, signature="00" * 64)
+    assert res.valid is False and res.reason == "signature_invalid"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"a": object()}, {"a": b"bytes"}, {"a": {1, 2}}, {1: "non-string key"}, {"a": {None: 1}}],
+    ids=["object", "bytes", "set", "int-key", "nested-none-key"],
+)
+def test_intent_value_json_cannot_carry_is_verify_failed_not_typeerror(body):
+    intent = {"type": "T", "timestamp": 100, "body": body}
+    res = _verifier_with_key().verify_intent(user_did="did:a", intent=intent, signature="00" * 64)
+    assert res.valid is False
+    assert res.reason is not None and res.reason.startswith("verify_failed:")
+
+
+@pytest.mark.parametrize("bad", [5, True, 1.5, b"ab", ["ab"], {"a": 1}], ids=lambda b: type(b).__name__)
+def test_intent_non_string_public_key_hex_is_resolve_failed_before_any_lookup(bad):
+    # The reason text is the one raised by normalize_hex itself, and no request
+    # went out -- so this is the new narrow branch, not the broad `except
+    # Exception` around the lookup (which can only run after a request).
+    calls: list[str] = []
+    v = _verifier_with_key(calls)
+    res = v.verify_intent(
+        user_did="did:a",
+        intent={"type": "T", "timestamp": 100},
+        signature="00" * 64,
+        public_key_hex=bad,  # type: ignore[arg-type]
+    )
+    assert res.valid is False
+    assert res.reason == f"resolve_failed: hex value must be a string, got {type(bad).__name__}"
+    assert calls == []
+
+
+@pytest.mark.parametrize("bad", [5, True, b"ab", ["ab"], {"a": 1}], ids=lambda b: type(b).__name__)
+def test_normalize_hex_and_resolve_key_raise_typeerror_on_non_string(bad):
+    from phoenixkey_sdk.verifier import normalize_hex
+
+    with pytest.raises(TypeError):
+        normalize_hex(bad)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        _verifier_with_key().resolve_key("did:a", bad)  # type: ignore[arg-type]

@@ -161,9 +161,26 @@ response at all.
 
 ## Differences from the TypeScript package
 
-Results are identical on every vector. The remaining differences are all on input the
-TypeScript types already forbid, or in the text after `:` of an error `reason`:
+Every case in `tests/vectors/vectors.json` gives the same result as the TypeScript code.
+Outside those vectors the two differ in the places below. Most are on input the TypeScript
+types forbid, where this package fails closed with `valid=False` and a `reason`; the exceptions
+(valid input that behaves differently) are the stricter Ed25519 and the integer limit on intents.
+For the kinds of bad input named below, the verify methods return a failed result instead
+of raising.
 
+* `verify_auth_proof` with a `user_did`, `domain` or `challenge` that is not a `str` returns
+  `verify_failed: <field> must be a string, ...` before any lookup. TypeScript coerces the
+  value to text and ends in `signature_invalid`.
+* `verify_intent` returns `verify_failed: ...` for an intent that holds a non-finite float
+  (`NaN`, `Infinity`), an integer outside +-2**53, a value JSON cannot carry (`bytes`, `set`,
+  a non-string key) or nesting deeper than the interpreter's recursion limit (a few hundred
+  levels). A JSON parser in JavaScript would round the large integer to a double (or to `null`
+  past 1.8e308) and verify those bytes; this package refuses to check a signature over bytes
+  that may differ from what the signer meant. `canonical_json_bytes` on its own keeps the
+  JavaScript rendering unless you pass `strict=True`.
+* A `public_key_hex` that is not a `str` makes `verify_intent` return `resolve_failed:
+  hex value must be a string, ...` without a request; `resolve_key` and `resolve_pubkey` raise
+  `TypeError`. TypeScript throws there too.
 * A missing, non-numeric or non-finite `intent["timestamp"]` (`NaN`, `Infinity`, which
   `json.loads` accepts as bare tokens) is `timestamp_skew` here; TypeScript lets it through the
   skew check (`NaN` compares false). A verifier should fail closed.

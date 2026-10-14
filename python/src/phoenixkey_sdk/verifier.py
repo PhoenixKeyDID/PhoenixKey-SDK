@@ -67,6 +67,8 @@ def normalize_hex(hex_str: str | None) -> str | None:
     """Drop a ``0x`` prefix, trim, lowercase. Empty or absent -> ``None``."""
     if hex_str is None:
         return None
+    if not isinstance(hex_str, str):
+        raise TypeError(f"hex value must be a string, got {type(hex_str).__name__}")
     s = hex_str[2:] if hex_str[:2] in ("0x", "0X") else hex_str
     s = s.strip(_JS_WHITESPACE).lower()
     return s or None
@@ -188,6 +190,13 @@ class PhoenixKeyVerifier:
         now = int(self._clock())
         if not _within_skew(timestamp, now, envelope_integer=True):
             return VerifyResult(False, user_did, "timestamp_skew")
+        # The envelope length-frames str fields; any other type has no bytes to
+        # frame. Refuse before the lookup so a bad request costs no network call.
+        for name, value in (("user_did", user_did), ("domain", domain), ("challenge", challenge)):
+            if not isinstance(value, str):
+                return VerifyResult(
+                    False, user_did, f"verify_failed: {name} must be a string, got {type(value).__name__}"
+                )
 
         # Resolve once, then try each envelope on that same key.
         resolved = self._resolve_for_verify(user_did)
@@ -239,7 +248,15 @@ class PhoenixKeyVerifier:
         resolved = self._resolve_for_verify(user_did, public_key_hex)
         if isinstance(resolved, VerifyResult):
             return resolved
-        return self._verify_with_key(resolved, user_did, canonical_json_bytes(intent), signature)
+        try:
+            message = canonical_json_bytes(intent, strict=True)
+        except (ValueError, TypeError) as e:
+            # Non-finite float, integer outside +-2**53, a type JSON cannot carry,
+            # or a non-string key.
+            return VerifyResult(False, user_did, f"verify_failed: {e}")
+        except RecursionError:
+            return VerifyResult(False, user_did, "verify_failed: intent nested too deeply")
+        return self._verify_with_key(resolved, user_did, message, signature)
 
     def resolve_key(self, user_did: str, public_key_hex: str | None = None) -> IdentityPubkey:
         """Fetch the full key record (cached if ``cache_ttl_ms`` > 0).
@@ -289,7 +306,13 @@ class PhoenixKeyVerifier:
     def _resolve_for_verify(
         self, user_did: str, public_key_hex: str | None = None
     ) -> IdentityPubkey | VerifyResult:
-        wanted = normalize_hex(public_key_hex)
+        try:
+            wanted = normalize_hex(public_key_hex)
+        except TypeError as e:
+            # TypeScript's normalizeHex also throws on a non-string; the nearest
+            # result branch is the lookup one (resolve_failed), and no request
+            # has gone out yet.
+            return VerifyResult(False, user_did, f"resolve_failed: {e}")
         try:
             key = self.resolve_key(user_did, wanted)
         except Exception as e:  # noqa: BLE001 - any lookup failure is a "no", not a crash

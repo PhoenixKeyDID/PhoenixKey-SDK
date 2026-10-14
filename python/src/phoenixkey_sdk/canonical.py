@@ -53,15 +53,30 @@ def _js_string(s: str) -> str:
     return "".join(out)
 
 
-def _js_number(x: int | float) -> str:
-    """``JSON.stringify(Number)`` -- ECMA-262 Number::toString plus the null rule."""
+def _js_number(x: int | float, strict: bool = False) -> str:
+    """``JSON.stringify(Number)`` -- ECMA-262 Number::toString plus the null rule.
+
+    ``strict`` refuses what JavaScript silently degrades: a non-finite float
+    (``null``) and an integer outside +-2**53 (rounded to a double, or ``Infinity``
+    and then ``null`` past 1.8e308). A verifier must not check a signature over
+    bytes that differ from what the signer meant, so it passes ``strict=True``.
+    """
     if isinstance(x, int):
         # A JSON parser in JavaScript would have turned this into a double.
         # Reproduce that so the same document gives the same bytes everywhere.
         if -(2**53) <= x <= 2**53:
             return str(x)
-        x = float(x)
+        if strict:
+            raise ValueError("integer outside the +-2**53 range that JSON numbers carry safely")
+        try:
+            x = float(x)
+        except OverflowError:
+            # Number("1" + "0" * 400) is Infinity in JavaScript and
+            # JSON.stringify(Infinity) is "null".
+            return "null"
     if math.isnan(x) or math.isinf(x):
+        if strict:
+            raise ValueError("non-finite number")
         return "null"
     if x == 0:
         return "0"
@@ -92,17 +107,24 @@ def _utf16_key(k: str) -> bytes:
     return k.encode("utf-16-be", "surrogatepass")
 
 
-def canonical_json_string(obj: Any) -> str:
+def canonical_json_string(obj: Any, *, strict: bool = False) -> str:
+    """Canonical JSON text of ``obj``.
+
+    ``strict=True`` raises ``ValueError`` for a non-finite float or an integer
+    outside +-2**53 instead of mapping it the way ``JSON.stringify`` does. Deep
+    nesting still ends in ``RecursionError``; the caller on an untrusted path
+    (``PhoenixKeyVerifier.verify_intent``) catches exactly that.
+    """
     if obj is None:
         return "null"
     if isinstance(obj, bool):
         return "true" if obj else "false"
     if isinstance(obj, (int, float)):
-        return _js_number(obj)
+        return _js_number(obj, strict)
     if isinstance(obj, str):
         return _js_string(obj)
     if isinstance(obj, (list, tuple)):
-        return "[" + ",".join(canonical_json_string(v) for v in obj) + "]"
+        return "[" + ",".join(canonical_json_string(v, strict=strict) for v in obj) + "]"
     if isinstance(obj, Mapping):
         for k in obj:
             if not isinstance(k, str):
@@ -110,13 +132,14 @@ def canonical_json_string(obj: Any) -> str:
         return (
             "{"
             + ",".join(
-                f"{_js_string(k)}:{canonical_json_string(obj[k])}" for k in sorted(obj, key=_utf16_key)
+                f"{_js_string(k)}:{canonical_json_string(obj[k], strict=strict)}"
+                for k in sorted(obj, key=_utf16_key)
             )
             + "}"
         )
     raise TypeError(f"Cannot canonicalize value of type {type(obj).__name__}")
 
 
-def canonical_json_bytes(obj: Any) -> bytes:
+def canonical_json_bytes(obj: Any, *, strict: bool = False) -> bytes:
     """UTF-8 bytes of the canonical JSON of ``obj`` (what an intent signature covers)."""
-    return canonical_json_string(obj).encode("utf-8")
+    return canonical_json_string(obj, strict=strict).encode("utf-8")

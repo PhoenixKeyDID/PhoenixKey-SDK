@@ -76,3 +76,37 @@ def test_envelope_rejects_bad_timestamp():
         encode_rp_auth_v1(user_did="d", domain="x", challenge="c", timestamp=1.5)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
         encode_rp_auth_v1(user_did="d", domain="x", challenge="c", timestamp=2**53)
+
+
+# ── numbers JavaScript degrades, and the strict mode a verifier uses ─────────
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (10**308, "1e+308"),  # the largest power of ten a double holds
+        (10**309, "null"),  # Number("1" + "0" * 309) is Infinity -> JSON.stringify gives null
+        (10**400, "null"),  # float(10**400) raises OverflowError in Python
+        (-(10**400), "null"),
+    ],
+)
+def test_huge_integers_follow_javascript_not_overflowerror(value, expected):
+    assert canonical_json_string(value) == expected
+    assert canonical_json_bytes({"n": value}) == b'{"n":' + expected.encode() + b"}"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [2**53 + 1, -(2**53) - 1, 10**400, -(10**400), float("nan"), float("inf"), float("-inf")],
+)
+def test_strict_refuses_numbers_javascript_would_degrade(value):
+    with pytest.raises(ValueError):
+        canonical_json_string(value, strict=True)
+    # ... also when nested at any depth, in a list or a mapping.
+    with pytest.raises(ValueError):
+        canonical_json_bytes({"a": [{"b": [value]}]}, strict=True)
+
+
+@pytest.mark.parametrize("value", [0, 2**53, -(2**53), 1.5, 1e300, -1e-7, True, None])
+def test_strict_leaves_ordinary_numbers_alone(value):
+    assert canonical_json_string(value, strict=True) == canonical_json_string(value)
