@@ -35,6 +35,27 @@ class HttpResponse:
 Fetch = Callable[[str, Mapping[str, str]], HttpResponse]
 
 
+def _is_http_url(url: str) -> bool:
+    return url.lower().startswith(("https://", "http://"))
+
+
+class _HttpOnlyRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to http(s).
+
+    urllib's default handler also follows a redirect to ``ftp://``; the answer then
+    has no HTTP status, and a verifier must not read keys from a non-HTTP source.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        if not _is_http_url(newurl):
+            raise PhoenixKeyError(
+                status=0,
+                code="network_error",
+                message="Redirect to a non-http(s) URL refused",
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def make_urllib_fetch(timeout: float = 10.0) -> Fetch:
     """Build the default ``Fetch`` on top of ``urllib.request``.
 
@@ -43,8 +64,10 @@ def make_urllib_fetch(timeout: float = 10.0) -> Fetch:
     with ``status == 0``.
     """
 
+    opener = urllib.request.build_opener(_HttpOnlyRedirect)
+
     def fetch(url: str, headers: Mapping[str, str]) -> HttpResponse:
-        if not url.lower().startswith(("https://", "http://")):
+        if not _is_http_url(url):
             raise PhoenixKeyError(
                 status=0,
                 code="network_error",
@@ -52,8 +75,9 @@ def make_urllib_fetch(timeout: float = 10.0) -> Fetch:
             )
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **headers}, method="GET")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - scheme checked above
-                return HttpResponse(resp.status, resp.read(MAX_BODY_BYTES + 1)[:MAX_BODY_BYTES])
+            with opener.open(req, timeout=timeout) as resp:  # noqa: S310 - scheme checked above and on redirect
+                status = resp.status
+                body = resp.read(MAX_BODY_BYTES + 1)
         except urllib.error.HTTPError as e:
             try:
                 body = e.read(MAX_BODY_BYTES + 1)[:MAX_BODY_BYTES]
@@ -64,5 +88,17 @@ def make_urllib_fetch(timeout: float = 10.0) -> Fetch:
             # HTTPException (BadStatusLine, LineTooLong, IncompleteRead, ...) is not
             # an OSError: a server that answers with garbage must not escape raw.
             raise PhoenixKeyError(status=0, code="network_error", message=f"Request failed: {e}") from e
+        if not isinstance(status, int):
+            raise PhoenixKeyError(status=0, code="network_error", message="Response has no HTTP status")
+        if len(body) > MAX_BODY_BYTES:
+            # Refuse, do not cut: a prefix of an oversized body can itself be valid JSON
+            # (a record followed by padding and a proxy error page), and the TS SDK
+            # rejects the whole body.
+            raise PhoenixKeyError(
+                status=0,
+                code="network_error",
+                message=f"Response body exceeds {MAX_BODY_BYTES} bytes",
+            )
+        return HttpResponse(status, body)
 
     return fetch

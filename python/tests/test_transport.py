@@ -143,3 +143,60 @@ def test_injected_fetch_that_raises_anything_is_resolve_failed_from_resolve_key(
     assert isinstance(ei.value.__cause__, ConnectionError)
     res = v.verify_intent(user_did="did:a", intent={"timestamp": 100}, signature="00")
     assert res.valid is False and res.reason is not None and res.reason.startswith("resolve_failed:")
+
+
+_PUBKEY = json.dumps(
+    {"result": {"public_key_hex": "04" + "11" * 64, "status": "active", "key_role": "owner"}}
+).encode()
+
+
+def _http_200(body: bytes) -> bytes:
+    return b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+
+def test_body_over_the_cap_is_refused_not_cut():
+    # The first MAX_BODY_BYTES are a valid record plus padding; what follows is a
+    # proxy error page. Cutting would accept the record; the whole body is not JSON.
+    from phoenixkey_sdk._http import MAX_BODY_BYTES
+
+    body = _PUBKEY + b" " * (MAX_BODY_BYTES - len(_PUBKEY)) + b"<html>proxy error</html>"
+    with _serve(_http_200(body)) as url:
+        with pytest.raises(PhoenixKeyError) as ei:
+            PhoenixKeyVerifier(url, timeout=5).resolve_key("did:a")
+    assert ei.value.status == 0 and ei.value.code == "network_error"
+    assert "exceeds" in str(ei.value)
+
+
+def test_body_at_the_cap_is_accepted():
+    from phoenixkey_sdk._http import MAX_BODY_BYTES
+
+    body = _PUBKEY + b" " * (MAX_BODY_BYTES - len(_PUBKEY))
+    with _serve(_http_200(body)) as url:
+        key = PhoenixKeyVerifier(url, timeout=5).resolve_key("did:a")
+    assert key.status == "active"
+
+
+def test_redirect_to_ftp_is_refused_before_following():
+    payload = b"HTTP/1.1 302 Found\r\nLocation: ftp://127.0.0.1:1/keys\r\nContent-Length: 0\r\n\r\n"
+    with _serve(payload) as url:
+        with pytest.raises(PhoenixKeyError) as ei:
+            PhoenixKeyVerifier(url, timeout=3).resolve_key("did:a")
+        v = AppTokenVerifier(url, on_warning=lambda m: None, timeout=3, clock=lambda: 100)
+        with pytest.raises(PhoenixKeyError) as ej:
+            v.verify(_TOKEN, "did:svc")
+    for e in (ei.value, ej.value):
+        assert e.status == 0 and e.code == "network_error"
+        assert "non-http(s)" in str(e)
+
+
+def test_jwks_body_over_the_cap_is_refused_not_cut():
+    from phoenixkey_sdk._http import MAX_BODY_BYTES
+
+    jwks = json.dumps({"keys": []}).encode()
+    body = jwks + b" " * (MAX_BODY_BYTES - len(jwks)) + b"<html>proxy error</html>"
+    with _serve(_http_200(body)) as url:
+        v = AppTokenVerifier(url, on_warning=lambda m: None, timeout=5, clock=lambda: 100)
+        with pytest.raises(PhoenixKeyError) as ei:
+            v.verify(_TOKEN, "did:svc")
+    assert ei.value.status == 0 and ei.value.code == "network_error"
+    assert "exceeds" in str(ei.value)
