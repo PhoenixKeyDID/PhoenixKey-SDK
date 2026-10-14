@@ -38,8 +38,21 @@ _SHORT_ESCAPES = {
 }
 
 
+def _join_surrogate_pairs(s: str) -> str:
+    """Join a surrogate pair held as two characters into one code point.
+
+    A str can hold a pair as two characters (a Python literal with the two escapes,
+    or two lone halves joined by the caller). JavaScript sees one astral character
+    there; join the pair as envelope._utf8 does and leave lone halves as they are.
+    """
+    if any(0xD800 <= ord(c) <= 0xDFFF for c in s):
+        return s.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "surrogatepass")
+    return s
+
+
 def _js_string(s: str) -> str:
     out = ['"']
+    s = _join_surrogate_pairs(s)
     for ch in s:
         cp = ord(ch)
         short = _SHORT_ESCAPES.get(cp)
@@ -57,9 +70,12 @@ def _js_number(x: int | float, strict: bool = False) -> str:
     """``JSON.stringify(Number)`` -- ECMA-262 Number::toString plus the null rule.
 
     ``strict`` refuses what JavaScript silently degrades: a non-finite float
-    (``null``) and an integer outside +-2**53 (rounded to a double, or ``Infinity``
-    and then ``null`` past 1.8e308). A verifier must not check a signature over
-    bytes that differ from what the signer meant, so it passes ``strict=True``.
+    (``null``) and an integer that a double cannot hold exactly. JavaScript
+    prints every double below 1e21 in plain digits, so an integer survives the
+    round trip when the digits JavaScript prints for ``float(x)`` are the digits
+    of ``x`` itself (``10**18`` does, ``2**60`` does not: it prints as
+    ``1152921504606847000``). A verifier must not check a signature over bytes
+    that differ from what the signer meant, so it passes ``strict=True``.
     """
     if isinstance(x, int):
         # A JSON parser in JavaScript would have turned this into a double.
@@ -67,7 +83,9 @@ def _js_number(x: int | float, strict: bool = False) -> str:
         if -(2**53) <= x <= 2**53:
             return str(x)
         if strict:
-            raise ValueError("integer outside the +-2**53 range that JSON numbers carry safely")
+            if abs(x) < 10**21 and _js_number(float(x)) == str(x):
+                return str(x)
+            raise ValueError("integer that a JSON number (an IEEE double) cannot hold exactly")
         try:
             x = float(x)
         except OverflowError:
@@ -111,8 +129,8 @@ def canonical_json_string(obj: Any, *, strict: bool = False) -> str:
     """Canonical JSON text of ``obj``.
 
     ``strict=True`` raises ``ValueError`` for a non-finite float or an integer
-    outside +-2**53 instead of mapping it the way ``JSON.stringify`` does. Deep
-    nesting still ends in ``RecursionError``; the caller on an untrusted path
+    a double cannot hold exactly, instead of mapping it the way ``JSON.stringify``
+    does. Deep nesting still ends in ``RecursionError``; the caller on an untrusted path
     (``PhoenixKeyVerifier.verify_intent``) catches exactly that.
     """
     if obj is None:
@@ -126,9 +144,18 @@ def canonical_json_string(obj: Any, *, strict: bool = False) -> str:
     if isinstance(obj, (list, tuple)):
         return "[" + ",".join(canonical_json_string(v, strict=strict) for v in obj) + "]"
     if isinstance(obj, Mapping):
+        joined: dict[str, str] = {}
         for k in obj:
             if not isinstance(k, str):
                 raise TypeError(f"canonical JSON object keys must be str, got {type(k).__name__}")
+            j = _join_surrogate_pairs(k)
+            if j in joined:
+                # Two Python keys, one JavaScript key: a JS object cannot hold both,
+                # so there is no canonical form both sides agree on.
+                raise ValueError(
+                    f"canonical JSON object keys {joined[j]!r} and {k!r} are the same key in JavaScript"
+                )
+            joined[j] = k
         return (
             "{"
             + ",".join(

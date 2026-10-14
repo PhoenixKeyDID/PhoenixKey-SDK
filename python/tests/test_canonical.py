@@ -110,3 +110,86 @@ def test_strict_refuses_numbers_javascript_would_degrade(value):
 @pytest.mark.parametrize("value", [0, 2**53, -(2**53), 1.5, 1e300, -1e-7, True, None])
 def test_strict_leaves_ordinary_numbers_alone(value):
     assert canonical_json_string(value, strict=True) == canonical_json_string(value)
+
+
+# ── integers: a JSON number is a double, JavaScript prints every double below
+# 1e21 in plain digits. An integer is safe exactly when those digits are its own.
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        10**18,
+        -(10**18),
+        1152921504606847000,  # 2**60 rounded to the 17 digits JavaScript prints
+        9007199254740994,  # 2**53 + 2: even, so a double holds it exactly
+    ],
+)
+def test_strict_accepts_integers_a_double_holds_exactly(value):
+    assert canonical_json_string(value, strict=True) == str(value)
+    # ... and that is also what the lenient (JavaScript-like) rendering prints.
+    assert canonical_json_string(value) == str(value)
+    assert canonical_json_bytes({"amount": value}, strict=True) == b'{"amount":' + str(value).encode() + b"}"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        1152921504606846976,  # 2**60: JavaScript prints 1152921504606847000
+        9007199254740993,  # 2**53 + 1: rounds to ...992
+        -9007199254740993,
+        10**21,  # JavaScript switches to 1e+21
+        -(10**21),
+    ],
+)
+def test_strict_refuses_integers_a_double_would_change(value):
+    with pytest.raises(ValueError):
+        canonical_json_string(value, strict=True)
+
+
+# ── a surrogate pair held as two characters is ONE character in JavaScript ──
+
+_PAIR = chr(0xD83D) + chr(0xDE00)  # two lone halves side by side: len 2, not one character
+
+
+def test_split_surrogate_pair_is_joined_like_javascript():
+    assert canonical_json_bytes(_PAIR) == b'"\xf0\x9f\x98\x80"'  # the bytes TypeScript produces
+    assert canonical_json_bytes(_PAIR) == canonical_json_bytes("\U0001f600")
+    assert canonical_json_bytes({_PAIR: [_PAIR]}) == canonical_json_bytes({"\U0001f600": ["\U0001f600"]})
+    assert len(_PAIR) == 2
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (chr(0xD83D), b'"\\ud83d"'),
+        (chr(0xDE00), b'"\\ude00"'),
+        (chr(0xDE00) + chr(0xD83D), b'"\\ude00\\ud83d"'),  # low before high is not a pair
+        ("a" + _PAIR + chr(0xD800) + "b", b'"a\xf0\x9f\x98\x80\\ud800b"'),
+        (_PAIR + chr(0xDE00), b'"\xf0\x9f\x98\x80\\ude00"'),
+    ],
+)
+def test_lone_surrogate_halves_are_still_escaped(value, expected):
+    assert canonical_json_bytes(value) == expected
+
+
+@pytest.mark.parametrize(
+    "obj",
+    [
+        {_PAIR: 1, "\U0001f600": 2},
+        {"\U0001f600": 2, _PAIR: 1},
+        {"k": {"a" + _PAIR: 1, "a\U0001f600": 2}},
+    ],
+    ids=["split-first", "joined-first", "nested"],
+)
+def test_keys_that_join_to_the_same_javascript_key_are_refused(obj):
+    # Two distinct Python keys, one key once JavaScript joins the pair: a JS object
+    # cannot hold both, so emitting both would sign bytes TypeScript never produces.
+    with pytest.raises(ValueError, match="same key in JavaScript"):
+        canonical_json_bytes(obj)
+
+
+def test_lone_halves_as_keys_stay_distinct_from_the_pair():
+    # UTF-16 order, as JavaScript sorts: D83D < D83D DE00 x < DE00.
+    obj = {chr(0xD83D): 1, chr(0xDE00): 2, _PAIR + "x": 3}
+    assert canonical_json_bytes(obj) == b'{"\\ud83d":1,"\xf0\x9f\x98\x80x":3,"\\ude00":2}'

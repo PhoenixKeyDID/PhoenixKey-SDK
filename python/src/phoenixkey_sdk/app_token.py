@@ -230,7 +230,9 @@ class AppTokenVerifier:
         """Verify signature, expiry **and** ``aud``; return the claims.
 
         Raises :class:`PhoenixKeyError` (``code`` is one of ``malformed_token``,
-        ``unsupported_alg``, ``jwks_fetch_failed``, ``jwks_key_not_found``,
+        ``unsupported_alg``, ``jwks_fetch_failed`` (also when an injected ``fetch`` raises
+        anything but ``PhoenixKeyError``), ``network_error`` (the default transport got no
+        answer), ``jwks_key_not_found``,
         ``jwks_key_not_pinned``, ``signature_invalid``, ``token_expired``,
         ``aud_mismatch``, ``expected_aud_required``). ``expected_aud`` is your own ServiceDID and is
         required: without it, a token minted for another service would be accepted.
@@ -364,7 +366,14 @@ class AppTokenVerifier:
         if self._cached is not None and self._cached[1] > self._clock() * 1000:
             return self._cached[0]
         url = f"{self._api_url}{JWKS_PATH}"
-        res = self._fetch(url, {"Accept": "application/json"})
+        try:
+            res = self._fetch(url, {"Accept": "application/json"})
+        except PhoenixKeyError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a caller-supplied fetch may raise anything
+            raise PhoenixKeyError(
+                status=0, code="jwks_fetch_failed", message=f"JWKS fetch failed: {type(e).__name__}: {e}"
+            ) from e
         if not res.ok:
             hint = (
                 " -- check that 'phoenixkey_api_url' includes the context path. The server serves "

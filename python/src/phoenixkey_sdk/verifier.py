@@ -18,7 +18,7 @@ from urllib.parse import quote
 
 from ._crypto import HexLengthError, hex_to_bytes, p256_verify_sha256
 from ._http import Fetch, HttpResponse, make_urllib_fetch
-from .canonical import canonical_json_bytes
+from .canonical import _join_surrogate_pairs, canonical_json_bytes
 from .envelope import encode_legacy_concat, encode_rp_auth_v1
 from .errors import PhoenixKeyError
 
@@ -70,8 +70,33 @@ def normalize_hex(hex_str: str | None) -> str | None:
     if not isinstance(hex_str, str):
         raise TypeError(f"hex value must be a string, got {type(hex_str).__name__}")
     s = hex_str[2:] if hex_str[:2] in ("0x", "0X") else hex_str
-    s = s.strip(_JS_WHITESPACE).lower()
+    # TypeScript lowercases UTF-16: a pair held as two characters is one code point
+    # there, and str.lower() on the two halves would leave it unchanged.
+    s = _join_surrogate_pairs(s).strip(_JS_WHITESPACE).lower()
     return s or None
+
+
+def _url_text(value: str, name: str) -> str:
+    """``value`` as text that can go into a URL.
+
+    A wrong type is a ``TypeError`` (a caller bug, like ``normalize_hex``). A str
+    holding a surrogate pair as two characters is joined into one code point, as
+    ``encodeURIComponent`` sees it. A lone surrogate has no UTF-8 form; TypeScript
+    throws ``URIError`` there, this raises ``ValueError``.
+    """
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string, got {type(value).__name__}")
+    try:
+        value.encode("utf-8")
+        return value
+    except UnicodeEncodeError:
+        pass
+    joined = value.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "surrogatepass")
+    try:
+        joined.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError(f"{name} contains a lone surrogate, which has no UTF-8 form") from None
+    return joined
 
 
 def _cache_key(user_did: str, wanted_hex: str | None) -> str:
@@ -245,14 +270,19 @@ class PhoenixKeyVerifier:
         now = int(self._clock())
         if not _within_skew(ts, now):
             return VerifyResult(False, user_did, "timestamp_skew")
+        # Same refusal as verify_auth_proof: no lookup for a user_did that is not text.
+        if not isinstance(user_did, str):
+            return VerifyResult(
+                False, user_did, f"verify_failed: user_did must be a string, got {type(user_did).__name__}"
+            )
         resolved = self._resolve_for_verify(user_did, public_key_hex)
         if isinstance(resolved, VerifyResult):
             return resolved
         try:
             message = canonical_json_bytes(intent, strict=True)
         except (ValueError, TypeError) as e:
-            # Non-finite float, integer outside +-2**53, a type JSON cannot carry,
-            # or a non-string key.
+            # Non-finite float, an integer a double cannot hold exactly, a type
+            # JSON cannot carry, or a non-string key.
             return VerifyResult(False, user_did, f"verify_failed: {e}")
         except RecursionError:
             return VerifyResult(False, user_did, "verify_failed: intent nested too deeply")
@@ -266,7 +296,10 @@ class PhoenixKeyVerifier:
         it, that exact key (any role). A 404 is raised, never replaced by the
         newest key.
         """
+        user_did = _url_text(user_did, "user_did")
         wanted = normalize_hex(public_key_hex)
+        if wanted is not None:
+            wanted = _url_text(wanted, "public_key_hex")
         ck = _cache_key(user_did, wanted)
         cached = self._cache.get(ck)
         if cached is not None and cached[1] > self._clock() * 1000:
@@ -307,13 +340,10 @@ class PhoenixKeyVerifier:
         self, user_did: str, public_key_hex: str | None = None
     ) -> IdentityPubkey | VerifyResult:
         try:
+            # normalize_hex throws on a non-string, as TypeScript's normalizeHex
+            # does; the nearest result branch is the lookup one (resolve_failed),
+            # and it throws before any request goes out.
             wanted = normalize_hex(public_key_hex)
-        except TypeError as e:
-            # TypeScript's normalizeHex also throws on a non-string; the nearest
-            # result branch is the lookup one (resolve_failed), and no request
-            # has gone out yet.
-            return VerifyResult(False, user_did, f"resolve_failed: {e}")
-        try:
             key = self.resolve_key(user_did, wanted)
         except Exception as e:  # noqa: BLE001 - any lookup failure is a "no", not a crash
             return VerifyResult(False, user_did, f"resolve_failed: {e}")
@@ -350,7 +380,14 @@ class PhoenixKeyVerifier:
     def _resolve_via_phoenixkey(self, user_did: str, wanted_hex: str | None) -> IdentityPubkey:
         query = f"?key={quote(wanted_hex, safe=_URI_COMPONENT_SAFE)}" if wanted_hex else ""
         url = f"{self._api_url}/identity/{quote(user_did, safe=_URI_COMPONENT_SAFE)}/pubkey{query}"
-        res: HttpResponse = self._fetch(url, {"Accept": "application/json"})
+        try:
+            res: HttpResponse = self._fetch(url, {"Accept": "application/json"})
+        except PhoenixKeyError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a caller-supplied fetch may raise anything
+            raise PhoenixKeyError(
+                status=0, code="resolve_failed", message=f"PhoenixKey pubkey lookup failed: {type(e).__name__}: {e}"
+            ) from e
         if not res.ok:
             raise PhoenixKeyError(
                 status=res.status,

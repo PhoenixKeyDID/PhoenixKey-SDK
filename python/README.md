@@ -164,7 +164,8 @@ response at all.
 Every case in `tests/vectors/vectors.json` gives the same result as the TypeScript code.
 Outside those vectors the two differ in the places below. Most are on input the TypeScript
 types forbid, where this package fails closed with `valid=False` and a `reason`; the exceptions
-(valid input that behaves differently) are the stricter Ed25519 and the integer limit on intents.
+(valid input that behaves differently) are the stricter Ed25519 and the integers an intent may
+hold (see the `verify_intent` bullet).
 For the kinds of bad input named below, the verify methods return a failed result instead
 of raising.
 
@@ -172,15 +173,34 @@ of raising.
   `verify_failed: <field> must be a string, ...` before any lookup. TypeScript coerces the
   value to text and ends in `signature_invalid`.
 * `verify_intent` returns `verify_failed: ...` for an intent that holds a non-finite float
-  (`NaN`, `Infinity`), an integer outside +-2**53, a value JSON cannot carry (`bytes`, `set`,
-  a non-string key) or nesting deeper than the interpreter's recursion limit (a few hundred
-  levels). A JSON parser in JavaScript would round the large integer to a double (or to `null`
-  past 1.8e308) and verify those bytes; this package refuses to check a signature over bytes
-  that may differ from what the signer meant. `canonical_json_bytes` on its own keeps the
-  JavaScript rendering unless you pass `strict=True`.
+  (`NaN`, `Infinity`), an integer that a double cannot hold exactly, a value JSON cannot
+  carry (`bytes`, `set`, a non-string key) or nesting deeper than the interpreter's recursion
+  limit (a few hundred levels). JavaScript does not round every integer above 2**53: it only
+  changes the ones a double cannot represent, and prints every double below 1e21 in plain
+  digits. An integer is accepted when those digits are its own, so `10**18`,
+  `1152921504606847000` and `9007199254740994` verify as in TypeScript. `2**60` (JavaScript
+  prints `1152921504606847000`), `2**53 + 1` (rounds to `...992`) and anything from `10**21`
+  up (`1e+21`, and `null` past 1.8e308) are refused: this package will not check a signature
+  over bytes that may differ from what the signer meant. `canonical_json_bytes` on its own
+  keeps the JavaScript rendering unless you pass `strict=True`.
+* `verify_intent` with a `user_did` that is not a `str` returns `verify_failed: user_did must
+  be a string, ...` before any lookup, the same result as `verify_auth_proof`.
 * A `public_key_hex` that is not a `str` makes `verify_intent` return `resolve_failed:
   hex value must be a string, ...` without a request; `resolve_key` and `resolve_pubkey` raise
-  `TypeError`. TypeScript throws there too.
+  `TypeError`. TypeScript throws there too. The same goes for a `user_did` that is not a
+  `str` (`TypeError`). A `user_did` or `public_key_hex` holding a lone surrogate has no UTF-8
+  form: `resolve_key`
+  and `resolve_pubkey` raise `ValueError` (TypeScript: `URIError` from `encodeURIComponent`),
+  and the verify methods return `resolve_failed: ...`. A surrogate pair held as two
+  characters is joined into one, as JavaScript sees it.
+* Strings in an intent that hold a surrogate pair as two characters are canonicalized as the
+  one character JavaScript sees (UTF-8 `f0 9f 98 80` for U+1F600); a lone half is still
+  escaped as `\udXXX`.
+* A server that answers with something that is not HTTP (bad status line, a header line over
+  64 KiB) is a `PhoenixKeyError` (`code="network_error"`, `status=0`) from the default
+  transport, like a refused connection. A `fetch` you inject may raise anything: in
+  `AppTokenVerifier` that becomes `jwks_fetch_failed`, in `PhoenixKeyVerifier.resolve_key`
+  `resolve_failed` (a `PhoenixKeyError` you raise yourself passes through unchanged).
 * A missing, non-numeric or non-finite `intent["timestamp"]` (`NaN`, `Infinity`, which
   `json.loads` accepts as bare tokens) is `timestamp_skew` here; TypeScript lets it through the
   skew check (`NaN` compares false). A verifier should fail closed.

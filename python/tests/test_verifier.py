@@ -464,9 +464,8 @@ def test_intent_value_json_cannot_carry_is_verify_failed_not_typeerror(body):
 
 @pytest.mark.parametrize("bad", [5, True, 1.5, b"ab", ["ab"], {"a": 1}], ids=lambda b: type(b).__name__)
 def test_intent_non_string_public_key_hex_is_resolve_failed_before_any_lookup(bad):
-    # The reason text is the one raised by normalize_hex itself, and no request
-    # went out -- so this is the new narrow branch, not the broad `except
-    # Exception` around the lookup (which can only run after a request).
+    # The reason text is the one raised by normalize_hex itself (it throws before
+    # the lookup), and `calls == []` below shows that no request went out.
     calls: list[str] = []
     v = _verifier_with_key(calls)
     res = v.verify_intent(
@@ -488,3 +487,148 @@ def test_normalize_hex_and_resolve_key_raise_typeerror_on_non_string(bad):
         normalize_hex(bad)  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         _verifier_with_key().resolve_key("did:a", bad)  # type: ignore[arg-type]
+
+
+# ── integers a double holds exactly are valid intent content ──────────────────
+
+
+def _signed_intent_verifier(intent):
+    """A verifier that knows a freshly generated P-256 key, and a signature over ``intent``."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    from phoenixkey_sdk import canonical_json_bytes
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    pub = key.public_key().public_bytes(Encoding.X962, PublicFormat.CompressedPoint).hex()
+    sig = key.sign(canonical_json_bytes(intent), ec.ECDSA(hashes.SHA256())).hex()
+    v = PhoenixKeyVerifier("https://x", fetch=lambda u, h: HttpResponse(200, _record_body(pub)), clock=lambda: 100)
+    return v, sig
+
+
+@pytest.mark.parametrize("amount", [10**18, 1152921504606847000, 9007199254740994, -(10**18)])
+def test_intent_with_integer_a_double_holds_exactly_verifies_end_to_end(amount):
+    intent = {"type": "T", "timestamp": 100, "body": {"amount": amount}}
+    v, sig = _signed_intent_verifier(intent)
+    res = v.verify_intent(user_did="did:a", intent=intent, signature=sig)
+    assert res.valid is True and res.reason is None
+
+
+@pytest.mark.parametrize("amount", [1152921504606846976, 9007199254740993, 10**21])
+def test_intent_with_integer_a_double_would_change_is_verify_failed(amount):
+    intent = {"type": "T", "timestamp": 100, "body": {"amount": amount}}
+    v, sig = _signed_intent_verifier({"type": "T", "timestamp": 100, "body": {"amount": 0}})
+    res = v.verify_intent(user_did="did:a", intent=intent, signature=sig)
+    assert res.valid is False
+    assert res.reason is not None and res.reason.startswith("verify_failed:")
+
+
+def test_intent_with_split_surrogate_pair_verifies_like_the_joined_character():
+    # Two lone halves put together by the caller are two characters in a Python
+    # str; the signer (TypeScript) signed the one astral character, UTF-8 bytes
+    # f0 9f 98 80.
+    intent = {"type": "T", "timestamp": 100, "display_text": chr(0xD83D) + chr(0xDE00)}
+    assert len(intent["display_text"]) == 2
+    v, sig = _signed_intent_verifier({"type": "T", "timestamp": 100, "display_text": "\U0001f600"})
+    assert v.verify_intent(user_did="did:a", intent=intent, signature=sig).valid is True
+
+
+# ── user_did that is not text, or cannot go into a URL ────────────────────────
+
+
+@pytest.mark.parametrize("bad", _NOT_STR, ids=_NOT_STR_IDS)
+def test_intent_non_string_user_did_is_verify_failed_before_any_lookup(bad):
+    calls: list[str] = []
+    res = _verifier_with_key(calls).verify_intent(
+        user_did=bad,  # type: ignore[arg-type]
+        intent={"type": "T", "timestamp": 100},
+        signature="00" * 64,
+    )
+    assert res.valid is False
+    assert res.reason == f"verify_failed: user_did must be a string, got {type(bad).__name__}"
+    assert calls == []
+
+
+@pytest.mark.parametrize("bad", _NOT_STR, ids=_NOT_STR_IDS)
+def test_intent_and_auth_proof_use_the_same_reason_for_a_non_string_user_did(bad):
+    v = _verifier_with_key()
+    a = v.verify_intent(user_did=bad, intent={"timestamp": 100}, signature="00")  # type: ignore[arg-type]
+    b = v.verify_auth_proof(user_did=bad, signature="00", challenge="c", domain="x", timestamp=100)  # type: ignore[arg-type]
+    assert a.reason == b.reason
+
+
+_LONE = ["did:" + chr(0xD83D), "did:" + chr(0xDE00), "did:" + chr(0xDE00) + chr(0xD83D)]
+
+
+@pytest.mark.parametrize("did", _LONE, ids=["high", "low", "reversed"])
+def test_resolve_with_lone_surrogate_in_user_did_is_value_error_without_a_request(did):
+    calls: list[str] = []
+    v = _verifier_with_key(calls)
+    with pytest.raises(ValueError, match="lone surrogate"):
+        v.resolve_key(did)
+    with pytest.raises(ValueError, match="lone surrogate"):
+        v.resolve_pubkey(did)
+    assert calls == []
+
+
+@pytest.mark.parametrize("did", _LONE, ids=["high", "low", "reversed"])
+def test_verify_with_lone_surrogate_in_user_did_is_resolve_failed(did):
+    calls: list[str] = []
+    v = _verifier_with_key(calls)
+    res = v.verify_intent(user_did=did, intent={"timestamp": 100}, signature="00" * 64)
+    assert res.valid is False and res.reason is not None and res.reason.startswith("resolve_failed:")
+    res = v.verify_auth_proof(user_did=did, signature="00" * 64, challenge="c", domain="x", timestamp=100)
+    assert res.valid is False and res.reason is not None and res.reason.startswith("resolve_failed:")
+    assert calls == []
+
+
+@pytest.mark.parametrize("bad", [5, None, True, b"did:a", ["did:a"]], ids=lambda b: type(b).__name__)
+def test_resolve_with_non_string_user_did_is_type_error(bad):
+    v = _verifier_with_key()
+    with pytest.raises(TypeError):
+        v.resolve_key(bad)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        v.resolve_pubkey(bad)  # type: ignore[arg-type]
+
+
+def test_resolve_joins_a_split_surrogate_pair_in_user_did_like_encode_uri_component():
+    calls: list[str] = []
+    _verifier_with_key(calls).resolve_key("did:" + chr(0xD83D) + chr(0xDE00))
+    assert calls == ["https://x/identity/did%3A%F0%9F%98%80/pubkey"]
+
+
+def test_resolve_joins_a_split_surrogate_pair_in_public_key_hex_like_encode_uri_component():
+    calls: list[str] = []
+    v = PhoenixKeyVerifier(
+        "https://x",
+        fetch=lambda u, h: calls.append(u) or HttpResponse(200, _record_body(_PUB)),
+        clock=lambda: 100,
+        cache_ttl_ms=30_000,
+    )
+    v.resolve_key("did:a", "ab" + chr(0xD83D) + chr(0xDE00))
+    v.resolve_key("did:a", "ab\U0001f600")  # same key once joined -> cached, no second request
+    assert calls == ["https://x/identity/did%3Aa/pubkey?key=ab%F0%9F%98%80"]
+
+
+def test_public_key_hex_is_lowercased_after_joining_the_pair_like_typescript():
+    # U+10400 DESERET CAPITAL LONG I lowercases to U+10428. Held as two halves,
+    # str.lower() alone would leave it unchanged; TypeScript lowercases the code point.
+    from phoenixkey_sdk.verifier import normalize_hex
+
+    assert normalize_hex(chr(0xD801) + chr(0xDC00)) == "\U00010428"
+    calls: list[str] = []
+    _verifier_with_key(calls).resolve_key("did:a", chr(0xD801) + chr(0xDC00))
+    assert calls == ["https://x/identity/did%3Aa/pubkey?key=%F0%90%90%A8"]
+
+
+def test_resolve_with_lone_surrogate_in_public_key_hex_is_value_error_without_a_request():
+    calls: list[str] = []
+    v = _verifier_with_key(calls)
+    with pytest.raises(ValueError, match="public_key_hex contains a lone surrogate"):
+        v.resolve_key("did:a", "ab" + chr(0xD800))
+    with pytest.raises(ValueError, match="lone surrogate"):
+        v.resolve_pubkey("did:a", chr(0xDE00))
+    res = v.verify_intent(user_did="did:a", intent={"timestamp": 100}, signature="00", public_key_hex=chr(0xD800))
+    assert res.valid is False and res.reason is not None and res.reason.startswith("resolve_failed:")
+    assert calls == []

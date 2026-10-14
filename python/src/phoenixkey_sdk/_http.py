@@ -7,6 +7,7 @@ TypeScript SDK lets you inject ``fetch``.
 
 from __future__ import annotations
 
+import http.client
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -59,7 +60,9 @@ def make_urllib_fetch(timeout: float = 10.0) -> Fetch:
             except Exception:  # pragma: no cover - body unreadable
                 body = b""
             return HttpResponse(e.code, body)
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+        except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
+            # HTTPException (BadStatusLine, LineTooLong, IncompleteRead, ...) is not
+            # an OSError: a server that answers with garbage must not escape raw.
             raise PhoenixKeyError(status=0, code="network_error", message=f"Request failed: {e}") from e
 
     return fetch
