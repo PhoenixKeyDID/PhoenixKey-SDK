@@ -193,13 +193,59 @@ def test_resolve_pubkey_gates():
     assert PhoenixKeyVerifier("https://x", fetch=serve("active", "viewer")).resolve_pubkey("did:a") == pub
 
 
-def test_auth_proof_non_integer_timestamp_inside_skew_raises():
-    pub = "02" + "33" * 32
+_NONFINITE = [float("nan"), float("inf"), float("-inf")]
+
+
+@pytest.mark.parametrize("bad", [*_NONFINITE, "100", "NaN", None, True, [100], 100.5, -5, 2**60, 10**400])
+def test_auth_proof_unusable_timestamp_is_a_failed_result_not_an_exception(bad):
     v = PhoenixKeyVerifier(
-        "https://x", fetch=lambda u, h: HttpResponse(200, _record_body(pub)), clock=lambda: 100
+        "https://x", fetch=lambda u, h: pytest.fail("must not fetch"), clock=lambda: 100
     )
-    with pytest.raises(ValueError):
-        v.verify_auth_proof(user_did="d", signature="00", challenge="c", domain="x", timestamp=100.5)  # type: ignore[arg-type]
+    res = v.verify_auth_proof(user_did="d", signature="00", challenge="c", domain="x", timestamp=bad)  # type: ignore[arg-type]
+    assert res.valid is False and res.reason == "timestamp_skew" and res.user_did == "d"
+
+
+def test_auth_proof_whole_number_float_timestamp_still_goes_through():
+    pub = "02" + "33" * 32
+    urls: list[str] = []
+
+    def fetch(url, headers):
+        urls.append(url)
+        return HttpResponse(200, _record_body(pub))
+
+    v = PhoenixKeyVerifier("https://x", fetch=fetch, clock=lambda: 100)
+    res = v.verify_auth_proof(user_did="d", signature="00", challenge="c", domain="x", timestamp=100.0)  # type: ignore[arg-type]
+    assert res.reason != "timestamp_skew" and len(urls) == 1
+
+
+@pytest.mark.parametrize("bad", _NONFINITE)
+def test_intent_nonfinite_timestamp_is_timestamp_skew(bad):
+    # abs(now - nan) > 60 is False: without an isfinite check NaN passes the gate.
+    v = PhoenixKeyVerifier("https://x", fetch=lambda u, h: pytest.fail("must not fetch"), clock=lambda: 100)
+    res = v.verify_intent(user_did="did:a", intent={"type": "T", "timestamp": bad}, signature="00")
+    assert res.valid is False and res.reason == "timestamp_skew"
+
+
+def test_intent_nan_timestamp_parsed_from_json_text_is_timestamp_skew():
+    # json.loads accepts the bare tokens NaN / Infinity / -Infinity.
+    for token in ("NaN", "Infinity", "-Infinity"):
+        intent = json.loads('{"type": "T", "timestamp": ' + token + "}")
+        v = PhoenixKeyVerifier("https://x", fetch=lambda u, h: pytest.fail("must not fetch"), clock=lambda: 100)
+        res = v.verify_intent(user_did="did:a", intent=intent, signature="00")
+        assert res.valid is False and res.reason == "timestamp_skew", token
+
+
+def test_intent_fractional_timestamp_inside_skew_still_goes_through():
+    # Unlike the auth-proof envelope, an intent timestamp is only signed as JSON.
+    urls: list[str] = []
+
+    def fetch(url, headers):
+        urls.append(url)
+        return HttpResponse(404, b"{}")
+
+    v = PhoenixKeyVerifier("https://x", fetch=fetch, clock=lambda: 100)
+    res = v.verify_intent(user_did="did:a", intent={"timestamp": 100.5}, signature="00")
+    assert res.reason != "timestamp_skew" and len(urls) == 1
 
 
 # ── the default urllib transport, against a real local socket ─────────────────

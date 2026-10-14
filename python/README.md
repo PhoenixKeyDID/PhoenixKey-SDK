@@ -97,12 +97,15 @@ the DID only. A login signed by an older, still-active device key is reported as
 ```python
 from phoenixkey_sdk import AppTokenVerifier, PhoenixKeyError, key_role_at_least
 
-tokens = AppTokenVerifier()
+# Pin the server's signing key(s): thumbprints computed from a JWKS you checked out of band.
+# (The value below is the RFC 8037 sample key's thumbprint -- replace it with your own.)
+tokens = AppTokenVerifier(pinned_jwk_thumbprints=["kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"])
 try:
     claims = tokens.verify(app_token, expected_aud="did:phoenix:svc:your-service")
 except PhoenixKeyError as e:
     ...  # e.code: malformed_token | unsupported_alg | jwks_fetch_failed |
-         #         jwks_key_not_found | signature_invalid | token_expired | aud_mismatch
+         #         jwks_key_not_found | jwks_key_not_pinned | signature_invalid |
+         #         token_expired | aud_mismatch
 
 if not key_role_at_least(claims.key_role, "manager"):
     raise PermissionError("this session cannot perform signing actions")
@@ -114,6 +117,19 @@ if not key_role_at_least(claims.key_role, "manager"):
 * `expected_aud` is required and must be your own ServiceDID. Use
   `verify_without_audience` only if you bind the token to yourself another way.
 * `key_role` is normalised fail-safe: missing or unknown becomes `"viewer"`.
+* **Pin the signing key.** TLS ends at the CDN edge: a bad or coerced CDN can serve a JWKS
+  with an extra `kid`, and its holder then mints `app_token`s for any DID. Pass
+  `pinned_jwk_thumbprints=[...]`, the RFC 7638 SHA-256 thumbprints (43-char base64url) of the
+  keys you trust, computed with `ed25519_jwk_thumbprint(jwk)` from a JWKS you verified out of
+  band. Every JWK whose thumbprint is not listed is ignored (the filter runs before the
+  `kid` lookup, so a duplicate `kid` cannot shadow the real key); a token whose `kid` points
+  only at an unlisted key fails with `jwks_key_not_pinned`, with no fall-back to another key.
+  After a signing-key rotation, add the new thumbprint (keep the old one while old tokens
+  live). An empty list, a non-list value or a malformed entry raises
+  `PhoenixKeyError(code="invalid_pinned_thumbprints")` at construction.
+* Without pinning the verifier still trusts the JWKS it downloads, and the first
+  verification emits a one-time `UserWarning` (once per verifier). Route it with
+  `on_warning=callable`, or acknowledge the risk with `on_warning=lambda message: None`.
 
 ## Behaviour you should know
 
@@ -148,8 +164,19 @@ response at all.
 Results are identical on every vector. The remaining differences are all on input the
 TypeScript types already forbid, or in the text after `:` of an error `reason`:
 
-* A missing or non-numeric `intent["timestamp"]` is `timestamp_skew` here; TypeScript lets it
-  through the skew check (`NaN` compares false). A verifier should fail closed.
+* A missing, non-numeric or non-finite `intent["timestamp"]` (`NaN`, `Infinity`, which
+  `json.loads` accepts as bare tokens) is `timestamp_skew` here; TypeScript lets it through the
+  skew check (`NaN` compares false). A verifier should fail closed.
+* `verify_auth_proof` returns `timestamp_skew` for a `timestamp` that is not a finite
+  non-negative whole number (`NaN`, a string, `100.5`) instead of raising from the envelope
+  encoder. TypeScript's argument is typed `number`; there it would throw `RangeError` or pass
+  the skew check.
+* Key pinning follows the TypeScript `pinnedJwkThumbprints` / `ed25519JwkThumbprint` /
+  `jwks_key_not_pinned` / `invalid_pinned_thumbprints` exactly, with two spellings that do not
+  carry over: `None` (the default) means "option omitted", where TypeScript distinguishes
+  `undefined` (omitted) from `null` (error); and the one-time warning goes to
+  `warnings.warn` (`UserWarning`) instead of `console.warn`. `on_warning` is the same hook as
+  `onWarning`.
 * The detail text of `resolve_failed: ...` (network errors, unparseable JSON) and of an
   undecodable `app_token` signature segment differs by runtime. The prefix and the error
   `code` are the same.
@@ -167,7 +194,9 @@ clock, and writes `tests/vectors/vectors.json`: key material derived from fixed 
 TypeScript code produced. The canonical bytes are read from the buffer the TypeScript
 verifier hashes, not recomputed. Negative cases include revoked and viewer keys,
 `key_mismatch`, 404 with a key hint, unknown `kid`, wrong audience, expired tokens and
-single-bit signature corruption.
+single-bit signature corruption. Key pinning has its own cases (an extra `kid` injected into the
+JWKS, a duplicate `kid` placed ahead of the real key, rotation, invalid pin lists) and the
+RFC 8037 Appendix A.3 thumbprint vector.
 
 ```bash
 npm install                                  # once, repository root

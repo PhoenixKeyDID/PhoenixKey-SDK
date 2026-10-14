@@ -532,6 +532,7 @@ function ed25519Key(label) {
 const SVC = "did:phoenix:svc:orilife";
 const srvK1 = ed25519Key("server-k1");
 const srvK2 = ed25519Key("server-k2");
+const attacker = ed25519Key("attacker");
 
 function mintToken({ header, payload, key = srvK1, rawSigningInput, signatureOverride }) {
   const h = b64url(utf8(JSON.stringify(header)));
@@ -562,11 +563,18 @@ async function buildTokenCases() {
     handler = () => jwks;
     exchanges = [];
     NOW = FIXED_NOW;
-    const av = new V.AppTokenVerifier({ phoenixkeyApiUrl: API });
     const mode = spec.mode ?? "verify";
     const aud = spec.aud === undefined ? SVC : spec.aud;
+    // `pins === undefined` = option omitted (legacy, warns once). Construction is
+    // inside the try: an invalid pin list must throw there, before any fetch.
+    const warnings = [];
     let expected;
     try {
+      const av = new V.AppTokenVerifier({
+        phoenixkeyApiUrl: API,
+        onWarning: (m) => warnings.push(m),
+        ...(spec.pins === undefined ? {} : { pinnedJwkThumbprints: spec.pins }),
+      });
       const claims = mode === "verify" ? await av.verify(token, aud) : await av.verifyWithoutAudience(token);
       expected = { ok: true, claims: JSON.parse(JSON.stringify(claims)) };
     } catch (e) {
@@ -578,6 +586,8 @@ async function buildTokenCases() {
       token,
       mode,
       expected_aud: mode === "verify" ? aud : null,
+      pinned_thumbprints: spec.pins === undefined ? null : spec.pins,
+      warnings_emitted: warnings.length,
       jwks_response: jwks,
       exchanges: exchanges.slice(),
       expected,
@@ -666,6 +676,108 @@ async function buildTokenCases() {
       return `${h}.${p}.@@@@`;
     })(),
   });
+
+  // ── key pinning (RFC 7638 thumbprints) ──
+  const tp = (k, kid = "k1") => V.ed25519JwkThumbprint(k.jwk(kid));
+  const tpK1 = tp(srvK1);
+  const tpK2 = tp(srvK2, "k2");
+  const attackerToken = (kid) => mintToken({ header: baseHeader(kid), payload: basePayload(), key: attacker });
+  await add("pinned_valid", { pins: [tpK1] });
+  await add("pinned_several_pins_one_matches", { pins: [tpK2, tpK1] });
+  await add("pinned_thumbprint_ignores_kid_use_alg_labels", {
+    pins: [tpK1],
+    jwks: jwksOk([{ ...srvK1.jwk("k1"), use: "enc", alg: "none" }]),
+  });
+  await add("pinned_rotation_second_key_pinned", {
+    pins: [tpK2],
+    header: baseHeader("k2"),
+    key: srvK2,
+    jwks: jwksOk([srvK1.jwk("k1"), srvK2.jwk("k2")]),
+  });
+  await add("pinned_rotation_token_uses_unpinned_old_key", {
+    pins: [tpK2],
+    jwks: jwksOk([srvK1.jwk("k1"), srvK2.jwk("k2")]),
+  });
+  await add("pinned_key_not_in_pins", { pins: [tpK2], jwks: jwksOk([srvK1.jwk("k1")]) });
+  await add("pinned_cdn_injects_extra_kid", {
+    pins: [tpK1],
+    token: attackerToken("k2"),
+    jwks: jwksOk([srvK1.jwk("k1"), attacker.jwk("k2")]),
+  });
+  await add("pinned_cdn_replaces_key_under_same_kid", {
+    pins: [tpK1],
+    token: attackerToken("k1"),
+    jwks: jwksOk([attacker.jwk("k1")]),
+  });
+  await add("pinned_duplicate_kid_attacker_first_real_second", {
+    pins: [tpK1],
+    jwks: jwksOk([attacker.jwk("k1"), srvK1.jwk("k1")]),
+  });
+  await add("pinned_duplicate_kid_attacker_first_attacker_token", {
+    pins: [tpK1],
+    token: attackerToken("k1"),
+    jwks: jwksOk([attacker.jwk("k1"), srvK1.jwk("k1")]),
+  });
+  await add("pinned_kid_unknown", { pins: [tpK1], header: baseHeader("nope") });
+  await add("pinned_kid_missing", { pins: [tpK1], header: { alg: "EdDSA", typ: "JWT" } });
+  await add("pinned_jwks_has_non_ed25519_key_ignored", {
+    pins: [tpK1],
+    jwks: jwksOk([{ kty: "RSA", kid: "rsa1", n: "AQAB", e: "AQAB" }, srvK1.jwk("k1")]),
+  });
+  await add("pinned_token_kid_points_at_non_ed25519_key", {
+    pins: [tpK1],
+    header: baseHeader("rsa1"),
+    jwks: jwksOk([{ kty: "RSA", kid: "rsa1", n: "AQAB", e: "AQAB" }, srvK1.jwk("k1")]),
+  });
+  await add("pinned_jwks_key_without_x_ignored", {
+    pins: [tpK1],
+    jwks: jwksOk([{ kty: "OKP", crv: "Ed25519", kid: "k0" }, srvK1.jwk("k1")]),
+  });
+  await add("pinned_jwks_empty_keys", { pins: [tpK1], jwks: jwksOk([]) });
+  await add("pinned_still_checks_aud", { pins: [tpK1], payload: { ...basePayload(), aud: "did:phoenix:svc:other" } });
+  await add("pinned_still_checks_signature", { pins: [tpK1], key: srvK2 });
+  await add("pinned_without_audience_mode", { pins: [tpK1], mode: "no-aud", payload: { ...basePayload(), aud: "did:phoenix:svc:anything" } });
+  // construction errors (thrown before any fetch)
+  await add("pinned_empty_list_throws", { pins: [] });
+  await add("pinned_not_an_array_throws", { pins: tpK1 });
+  await add("pinned_entry_too_short_throws", { pins: ["abc"] });
+  await add("pinned_entry_too_long_throws", { pins: [tpK1 + "A"] });
+  await add("pinned_entry_bad_alphabet_throws", { pins: [tpK1.slice(0, 42) + "+"] });
+  await add("pinned_entry_padded_base64_throws", { pins: [tpK1.slice(0, 42) + "="] });
+  await add("pinned_entry_trailing_newline_throws", { pins: [tpK1.slice(0, 42) + "\n"] });
+  await add("pinned_entry_not_a_string_throws", { pins: [123] });
+  await add("pinned_one_good_one_bad_entry_throws", { pins: [tpK1, "abc"] });
+  return cases;
+}
+
+// ── 7b. RFC 7638 thumbprint vectors ───────────────────────────────────────────
+function buildThumbprintCases() {
+  const cases = [];
+  const add = (name, jwk) => {
+    let expected;
+    try {
+      expected = { ok: true, thumbprint: V.ed25519JwkThumbprint(jwk) };
+    } catch (e) {
+      expected = { ok: false, error: { name: e.name, code: e.code ?? null, status: e.status ?? null } };
+    }
+    cases.push({ name, jwk, expected });
+  };
+  // RFC 8037 Appendix A.3: the thumbprint of the Appendix A.2 public key.
+  add("rfc8037_appendix_a3", { kty: "OKP", crv: "Ed25519", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" });
+  add("rfc8037_extra_members_do_not_enter_the_hash", {
+    kty: "OKP", crv: "Ed25519", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo", kid: "any", use: "sig", alg: "EdDSA",
+  });
+  add("server_k1", srvK1.jwk("k1"));
+  add("server_k2", srvK2.jwk("k2"));
+  add("attacker", attacker.jwk("k1"));
+  add("wrong_kty", { kty: "RSA", crv: "Ed25519", x: b64url(srvK1.pub) });
+  add("wrong_crv", { kty: "OKP", crv: "P-256", x: b64url(srvK1.pub) });
+  add("x_missing", { kty: "OKP", crv: "Ed25519" });
+  add("x_empty", { kty: "OKP", crv: "Ed25519", x: "" });
+  add("x_not_a_string", { kty: "OKP", crv: "Ed25519", x: 5 });
+  add("x_not_base64url", { kty: "OKP", crv: "Ed25519", x: "ab+/" });
+  add("x_padded", { kty: "OKP", crv: "Ed25519", x: b64url(srvK1.pub) + "=" });
+  add("x_trailing_newline", { kty: "OKP", crv: "Ed25519", x: b64url(srvK1.pub) + "\n" });
   return cases;
 }
 
@@ -677,7 +789,7 @@ const pkgVersion = (name) => JSON.parse(fs.readFileSync(path.join(ROOT, "node_mo
       [devA, devB, devC].map((d) => [d.label, { seed_label: "phoenixkey-sdk-python-vectors/p256/" + d.label, public_compressed_hex: d.compressed, public_uncompressed_hex: d.uncompressed }]),
     ),
     ed25519: Object.fromEntries(
-      [srvK1, srvK2].map((k) => [k.label, { seed_label: "phoenixkey-sdk-python-vectors/ed25519/" + k.label, public_hex: hex(k.pub) }]),
+      [srvK1, srvK2, attacker].map((k) => [k.label, { seed_label: "phoenixkey-sdk-python-vectors/ed25519/" + k.label, public_hex: hex(k.pub) }]),
     ),
   };
   const out = {
@@ -698,12 +810,13 @@ const pkgVersion = (name) => JSON.parse(fs.readFileSync(path.join(ROOT, "node_mo
     intent: await buildIntentCases(),
     auth_proof: await buildAuthCases(),
     app_token: await buildTokenCases(),
+    jwk_thumbprint: buildThumbprintCases(),
   };
   fs.writeFileSync(OUT, JSON.stringify(out, null, 2) + "\n");
   fs.rmSync(BUILD, { recursive: true, force: true });
   const n = (a) => a.length;
   console.log(
-    `wrote ${path.relative(ROOT, OUT)}: canonical=${n(out.canonical)} envelope=${n(out.envelope)} intent=${n(out.intent)} auth_proof=${n(out.auth_proof)} app_token=${n(out.app_token)}`,
+    `wrote ${path.relative(ROOT, OUT)}: canonical=${n(out.canonical)} envelope=${n(out.envelope)} intent=${n(out.intent)} auth_proof=${n(out.auth_proof)} app_token=${n(out.app_token)} jwk_thumbprint=${n(out.jwk_thumbprint)}`,
   );
 })().catch((e) => {
   console.error(e);

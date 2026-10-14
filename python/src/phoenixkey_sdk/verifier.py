@@ -10,6 +10,7 @@ skew, canonical JSON, envelope bytes) are the ones the TypeScript SDK applies;
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
@@ -80,6 +81,36 @@ def _is_key_usable(key: IdentityPubkey) -> bool:
     return key.status == "active"
 
 
+_MAX_SAFE_INTEGER = 2**53 - 1
+
+
+def _within_skew(ts: object, now: int, *, envelope_integer: bool = False) -> bool:
+    """The ±60 s gate shared by ``verify_auth_proof`` and ``verify_intent``.
+
+    Fails closed: anything that is not a real, finite number is outside the
+    window. ``abs(now - nan) > 60`` is ``False`` in Python (and in JavaScript), so
+    without the type and ``isfinite`` checks a NaN -- which ``json.loads`` accepts
+    as the bare token ``NaN`` -- would pass the gate. ``envelope_integer`` also
+    requires a value the ``RP_AUTH`` envelope can encode (a non-negative integer,
+    a whole-number float allowed), so the auth-proof flow never raises
+    ``ValueError`` from the envelope encoder for a bad timestamp.
+    """
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+        return False
+    if isinstance(ts, float) and not math.isfinite(ts):
+        return False
+    if envelope_integer:
+        if isinstance(ts, float) and not ts.is_integer():
+            return False
+        if not 0 <= ts <= _MAX_SAFE_INTEGER:
+            return False
+    # Same comparison direction as the TypeScript gate (reject when `> 60`). That is
+    # exactly why the `isfinite` check above is load-bearing: NaN makes this False.
+    if abs(now - ts) > TIMESTAMP_SKEW_SEC:
+        return False
+    return True
+
+
 def _utf8_json(body: bytes) -> Any:
     return json.loads(body.decode("utf-8"))
 
@@ -130,10 +161,12 @@ class PhoenixKeyVerifier:
 
         Rebuilds the ``PHOENIXKEY_RP_AUTH:v1`` envelope and checks the signature
         against the **newest owner key** of ``user_did`` (no ``public_key_hex``
-        is accepted here -- same as the TypeScript SDK). Enforces ±60 s skew.
+        is accepted here -- same as the TypeScript SDK). Enforces ±60 s skew. A
+        ``timestamp`` that is not a finite non-negative whole number (``NaN``, a
+        string, ``100.5``) is ``timestamp_skew``, never an exception.
         """
         now = int(self._clock())
-        if abs(now - timestamp) > TIMESTAMP_SKEW_SEC:
+        if not _within_skew(timestamp, now, envelope_integer=True):
             return VerifyResult(False, user_did, "timestamp_skew")
 
         # Resolve once, then try each envelope on that same key.
@@ -178,12 +211,10 @@ class PhoenixKeyVerifier:
         (DID, key). The caller must still check ``nonce`` uniqueness.
         """
         ts = intent.get("timestamp") if isinstance(intent, Mapping) else None
-        if isinstance(ts, bool) or not isinstance(ts, (int, float)):
-            # TypeScript lets a missing timestamp through the skew gate (NaN
-            # compares false). A verifier must not: fail closed.
-            return VerifyResult(False, user_did, "timestamp_skew")
+        # TypeScript lets a missing timestamp (and NaN) through the skew gate
+        # (the comparison is false). A verifier must not: fail closed.
         now = int(self._clock())
-        if abs(now - ts) > TIMESTAMP_SKEW_SEC:
+        if not _within_skew(ts, now):
             return VerifyResult(False, user_did, "timestamp_skew")
         resolved = self._resolve_for_verify(user_did, public_key_hex)
         if isinstance(resolved, VerifyResult):
