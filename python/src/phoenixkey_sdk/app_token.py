@@ -15,7 +15,6 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-import json
 import re
 import time
 import warnings
@@ -25,7 +24,7 @@ from typing import Any, Callable, Mapping
 from ._crypto import ed25519_verify
 from ._http import Fetch, make_urllib_fetch
 from .errors import PhoenixKeyError
-from .verifier import DEFAULT_PHOENIXKEY_API_URL
+from .verifier import DEFAULT_PHOENIXKEY_API_URL, _strict_json
 
 JWKS_PATH = "/.well-known/jwks.json"
 DEFAULT_JWKS_CACHE_TTL_MS = 60 * 60 * 1000
@@ -126,17 +125,6 @@ def _is_pinned(key: object, pinned: frozenset[str]) -> bool:
 
 def _warn_unpinned(message: str) -> None:
     warnings.warn(message, UserWarning, stacklevel=5)
-
-
-def _reject_json_constant(name: str) -> Any:
-    raise ValueError(f"non-standard JSON constant: {name}")
-
-
-def _strict_json(text: str) -> Any:
-    # json.loads accepts bare NaN / Infinity / -Infinity; JSON.parse in the
-    # TypeScript SDK rejects them. Without this, a signed token whose exp is NaN
-    # passes the expiry gate (every comparison with NaN is False).
-    return json.loads(text, parse_constant=_reject_json_constant)
 
 
 def _malformed(message: str) -> PhoenixKeyError:

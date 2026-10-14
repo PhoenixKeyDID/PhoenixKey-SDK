@@ -320,3 +320,47 @@ def test_jwks_body_with_non_standard_json_constant_is_not_cached_as_jwks():
     with pytest.raises(PhoenixKeyError) as ei:
         v.verify(_valid_case()["token"], _valid_case()["expected_aud"])
     assert ei.value.code == "jwks_fetch_failed" and len(calls) == 1
+
+
+# A deeply nested or NaN-bearing header is parsed before the signature is
+# checked; both must come back as malformed_token, never as a raw exception.
+
+
+def _self_signed_token_with_header(header_text: str):
+    v, token = _self_signed_verifier_and_token("1900000000")
+    _, p, _ = token.split(".")
+    return v, _b64u(header_text.encode()) + "." + p + ".AA"
+
+
+@pytest.mark.parametrize("const", ["NaN", "Infinity", "-Infinity"])
+def test_header_with_non_standard_json_constant_is_malformed(const):
+    v, token = _self_signed_token_with_header('{"alg":"EdDSA","kid":"k1","x":%s}' % const)
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.verify(token, "svc")
+    assert ei.value.code == "malformed_token"
+
+
+@pytest.mark.parametrize("segment", ["header", "payload"])
+def test_deeply_nested_segment_is_malformed_not_recursion_error(segment):
+    deep = "[" * 200_000 + "]" * 200_000
+    v, token = _self_signed_verifier_and_token("1900000000")
+    h, p, s = token.split(".")
+    if segment == "header":
+        h = _b64u(deep.encode())
+    else:
+        p = _b64u(deep.encode())
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.verify(h + "." + p + "." + s, "svc")
+    assert ei.value.code == "malformed_token"
+
+
+def test_deeply_nested_jwks_body_is_a_fetch_failure():
+    calls: list[str] = []
+    v = AppTokenVerifier(
+        "https://x",
+        fetch=jwks_fetch({"status": 200, "body": "[" * 200_000 + "]" * 200_000}, calls),
+        on_warning=lambda m: None,
+    )
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.verify(_valid_case()["token"], _valid_case()["expected_aud"])
+    assert ei.value.code == "jwks_fetch_failed" and len(calls) == 1

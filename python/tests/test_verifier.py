@@ -339,3 +339,20 @@ def test_auth_proof_non_string_signature_is_verify_failed_not_an_exception(sig):
     v = PhoenixKeyVerifier("https://x", fetch=lambda u, h: HttpResponse(200, _record_body(pub)), clock=lambda: 100)
     res = v.verify_auth_proof(user_did="d", signature=sig, challenge="c", domain="x", timestamp=100)  # type: ignore[arg-type]
     assert res.valid is False and res.reason is not None and res.reason.startswith("verify_failed:")
+
+
+# The pubkey lookup body goes through the same strict parser as app tokens.
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _record_body("02" + "33" * 32)[:-1] + b', "n": NaN}',
+        b"[" * 200_000 + b"]" * 200_000,
+    ],
+    ids=["nan", "deep"],
+)
+def test_pubkey_lookup_body_parsed_strictly(body):
+    v = PhoenixKeyVerifier("https://x", fetch=lambda u, h: HttpResponse(200, body), clock=lambda: 100)
+    res = v.verify_auth_proof(user_did="d", signature="00" * 64, challenge="c", domain="x", timestamp=100)
+    assert res.valid is False and res.reason is not None and res.reason.startswith("resolve_failed:")

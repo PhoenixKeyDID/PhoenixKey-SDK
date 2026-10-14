@@ -111,8 +111,28 @@ def _within_skew(ts: object, now: int, *, envelope_integer: bool = False) -> boo
     return True
 
 
+def _reject_json_constant(name: str) -> Any:
+    raise ValueError(f"non-standard JSON constant: {name}")
+
+
+def _strict_json(text: str) -> Any:
+    """Parse JSON the way ``JSON.parse`` in the TypeScript SDK does.
+
+    ``json.loads`` accepts bare NaN / Infinity / -Infinity; ``JSON.parse``
+    rejects them. Without this, a signed token whose exp is NaN passes the
+    expiry gate (every comparison with NaN is False). ``json.loads`` also raises
+    ``RecursionError`` on deeply nested input -- a few KB is enough on some
+    interpreters -- and that input arrives before any signature check, so it is
+    reported as a ``ValueError`` like any other malformed body.
+    """
+    try:
+        return json.loads(text, parse_constant=_reject_json_constant)
+    except RecursionError:
+        raise ValueError("JSON nesting too deep") from None
+
+
 def _utf8_json(body: bytes) -> Any:
-    return json.loads(body.decode("utf-8"))
+    return _strict_json(body.decode("utf-8"))
 
 
 class PhoenixKeyVerifier:
