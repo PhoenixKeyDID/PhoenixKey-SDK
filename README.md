@@ -251,31 +251,27 @@ key, so it still verifies against the newest owner key only.
 ## Step 5 — Wallet & MAGIC accrual (v0.3.0+)
 
 ```ts
-import {
-  PhoenixKeyClient,
-  PREPROD_SLOT_ORIGIN_MS,
-  WalletModule,
-} from "@phoenixkeydid/phoenixkey-sdk";
-
 // Server-snapshot balance — needs the session of the SAME DID (Bearer token);
 // throws "Not authenticated" without one, and the server answers 401 for any other DID.
 // The server route is deprecated: prefer `wallet.getAll(userDid)` (wallets + MAGIC + vault).
 const balance = await phoenix.wallet.getBalance(userDid);
 // → { balance_lovelace, balance_lamp, balance_carp, balance_magic, magic_accrued, magic_rate_per_slot, last_accrual_slot, current_slot }
 // Large quantities are decimal STRINGS on the wire (BigInt(balance.balance_lamp)); slots are numbers.
-
-// UI tick between polls — extrapolate MAGIC accrual since `last_accrual_slot`
-const liveMagic = WalletModule.extrapolateAccrued(
-  balance,
-  Date.now(),
-  PREPROD_SLOT_ORIGIN_MS, // or MAINNET_SLOT_ORIGIN_MS
-);
 ```
 
 > MAGIC is not minted to a wallet: the old `claimMagic()` (`POST /wallet/magic/claim`)
 > was removed in 0.8.0 because the server always answers `410 MAGIC_CLAIM_DEPRECATED`.
 > Read the MAGIC balance from `wallet.getAll()` (`magic`) / the Wakeme vault instead —
 > the deprecated balance route always returns its MAGIC fields as `0` / `""`.
+>
+> `WalletModule.extrapolateAccrued()` is likewise deprecated and slated for
+> removal: it extrapolates the dropped per-wallet accrual model
+> (`magic_rate_per_slot` — always `""` from the server), but MAGIC is an
+> accounting number in the Vault, accrued per vault rather than at a per-slot
+> wallet rate — there is nothing to extrapolate client-side. Read MAGIC from
+> `wallet.getAll(userDid)` (`magic.available` / `magic.accrued`) or
+> `wakeme.getVaultMagic(userDid)` (Step 6); see
+> [INTEGRATION.md §2.1](INTEGRATION.md) for the live endpoint map.
 
 ---
 
