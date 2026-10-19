@@ -326,9 +326,19 @@ export class WalletModule {
   }
 
   /**
-   * @deprecated Extrapolates the deprecated per-wallet MAGIC accrual model,
-   * which does not match canonical MAGIC (per-vault generators, not a per-slot
-   * wallet rate). Slated for removal. See MAGIC-LAMP-INTEGRATION-GAP.md.
+   * @deprecated The per-wallet MAGIC accrual model this extrapolates was
+   * dropped. MAGIC is an accounting number in the Vault of the Wakeme
+   * service — generated inside each vault from locked LAMP, never accrued at
+   * a per-wallet per-slot rate — so there is no client-side rate to
+   * extrapolate, and the deprecated balance route always returns
+   * `magic_rate_per_slot` as `""`. Slated for removal.
+   *
+   * Replacement reads (no 1:1 extrapolation successor):
+   *   - `getAll(userDid)` — the `magic` block (`MagicAccount`: `source`,
+   *     `available` / `accrued` / `expired`, nanogic decimal strings); check
+   *     `source === "unwired"` before rendering numbers;
+   *   - `wakeme.getVaultMagic(did)` — daily MAGIC yield, read-only.
+   * See INTEGRATION.md §2.1 for the live endpoint map.
    *
    * Compute display-time accrued MAGIC by extrapolating from server snapshot.
    *
