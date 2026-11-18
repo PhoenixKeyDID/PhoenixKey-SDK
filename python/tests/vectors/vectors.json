@@ -415,7 +415,7 @@
       ],
       "expected": {
         "valid": false,
-        "reason": "resolve_failed: PhoenixKey pubkey lookup failed: 404"
+        "reason": "resolve_failed: KEY_NOT_FOUND"
       }
     },
     {
@@ -648,7 +648,7 @@
       ],
       "expected": {
         "valid": false,
-        "reason": "resolve_failed: PhoenixKey pubkey lookup failed: 404"
+        "reason": "resolve_failed: KEY_NOT_FOUND"
       }
     },
     {
@@ -1662,7 +1662,7 @@
       ],
       "expected": {
         "valid": false,
-        "reason": "resolve_failed: PhoenixKey pubkey lookup failed: 404"
+        "reason": "resolve_failed: KEY_NOT_FOUND"
       }
     },
     {

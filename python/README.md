@@ -139,6 +139,10 @@ if not key_role_at_least(claims.key_role, "manager"):
 * **`reason` strings are the TypeScript ones**: `timestamp_skew` (more than 60 s from your
   clock), `resolve_failed: <detail>`, `key_revoked[: <time>]`, `key_role_not_owner`,
   `key_mismatch`, `signature_invalid`, `verify_failed: <detail>`.
+* **A failed lookup keeps the server's error code**: the raised `PhoenixKeyError` carries
+  the numeric code in `raw_code` and the server's message verbatim — `2094`
+  `DID_HASH_PART_MISSING` (HTTP 400) means the `did:` string is missing its 64-hex
+  segment; `3002` `KEY_NOT_FOUND` (HTTP 404) means the DID/key does not exist.
 * The API base must include the `/api/v1` context path (that is the default).
 
 ## Own HTTP stack, own clock
