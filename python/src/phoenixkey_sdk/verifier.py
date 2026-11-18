@@ -389,10 +389,35 @@ class PhoenixKeyVerifier:
                 status=0, code="resolve_failed", message=f"PhoenixKey pubkey lookup failed: {type(e).__name__}: {e}"
             ) from e
         if not res.ok:
+            # Thân lỗi của máy chủ là phong bì JSON có ``code`` SỐ (2094
+            # DID_HASH_PART_MISSING, 3002 KEY_NOT_FOUND, ...). Giữ nguyên mã số
+            # trong ``raw_code`` và câu của máy chủ làm ``message`` — cùng khuôn
+            # TypeScript vẫn dùng (``fetcher.ts`` và verifier.ts, issue #47) —
+            # để bên tích hợp phân biệt "DID thiếu đoạn 64 hex" (sửa phía họ)
+            # với "DID/khoá không tồn tại" (coi là không xác minh được).
+            # ``code`` chuỗi giữ "resolve_failed". Thân không đọc được (không
+            # phải JSON, hoặc ``code`` không phải số) ⇒ giữ nguyên hành vi cũ:
+            # không ném lỗi phụ, không bịa mã.
+            raw_code: int | None = None
+            server_message: str | None = None
+            try:
+                body = _utf8_json(res.body)
+            except (ValueError, UnicodeDecodeError):
+                body = None
+            if isinstance(body, dict):
+                code = body.get("code")
+                if isinstance(code, int) and not isinstance(code, bool):
+                    raw_code = code
+                    message = body.get("message")
+                    if isinstance(message, str):
+                        server_message = message
             raise PhoenixKeyError(
                 status=res.status,
                 code="resolve_failed",
-                message=f"PhoenixKey pubkey lookup failed: {res.status}",
+                raw_code=raw_code,
+                message=server_message
+                if server_message is not None
+                else f"PhoenixKey pubkey lookup failed: {res.status}",
             )
         try:
             body = _utf8_json(res.body)

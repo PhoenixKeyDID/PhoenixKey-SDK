@@ -240,7 +240,11 @@ the same gates as before (`status === "active"`) plus `key_role === "owner"` (th
 lookup returns manager/viewer keys too, which must not be able to sign intents).
 The hex is only a *lookup hint*: the signature is checked against the key the server
 returns for that exact (DID, key) pair. A 404 fails the verification
-(`resolve_failed`) — it never falls back to the newest key. The cache is keyed by
+(`resolve_failed`) — it never falls back to the newest key. On any non-2xx the thrown
+`PhoenixKeyError` keeps the server's numeric error code in `rawCode` and its message
+verbatim: `2094` `DID_HASH_PART_MISSING` (HTTP 400) means the `did:` string is missing
+its 64-hex segment — fix it on your side; `3002` `KEY_NOT_FOUND` (HTTP 404) means the
+DID/key does not exist. The cache is keyed by
 (DID, key), so two devices never share an entry.
 
 `verifyAuthProof` has no such hint yet: the login proof does not carry the signing

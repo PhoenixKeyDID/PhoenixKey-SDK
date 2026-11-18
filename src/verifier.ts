@@ -299,10 +299,31 @@ export class PhoenixKeyVerifier {
     const url = `${this.phoenixkeyApiUrl}/identity/${encodeURIComponent(userDid)}/pubkey${query}`;
     const res = await fetch(url, { headers: { Accept: "application/json" } });
     if (!res.ok) {
+      // Thân lỗi của máy chủ là phong bì JSON có `code` SỐ (2094
+      // DID_HASH_PART_MISSING, 3002 KEY_NOT_FOUND, ...). Nuốt nó thành một lỗi
+      // chung chung "HTTP 400" là làm hai lỗi khác hẳn nhau trông giống nhau:
+      // 2094 là bên tích hợp gửi DID thiếu đoạn 64 hex (sửa phía họ được),
+      // 3002 là DID/khoá không tồn tại (coi là không xác minh được). Giữ nguyên
+      // mã số trong `rawCode` và câu của máy chủ làm `message` — cùng khuôn
+      // `fetcher.ts` vẫn dùng cho các tuyến khác. `code` chuỗi giữ "resolve_failed".
+      // Thân không đọc được (không phải JSON, hoặc `code` không phải số) ⇒ giữ
+      // nguyên hành vi cũ: không ném lỗi phụ, không bịa mã.
+      let rawCode: number | undefined;
+      let serverMessage: string | undefined;
+      try {
+        const body = (await res.json()) as { code?: unknown; message?: unknown };
+        if (typeof body?.code === "number") {
+          rawCode = body.code;
+          if (typeof body.message === "string") serverMessage = body.message;
+        }
+      } catch {
+        /* thân không phải JSON — thông điệp cũ như cũ */
+      }
       throw new PhoenixKeyError({
         status: res.status,
         code: "resolve_failed",
-        message: `PhoenixKey pubkey lookup failed: ${res.status}`,
+        rawCode,
+        message: serverMessage ?? `PhoenixKey pubkey lookup failed: ${res.status}`,
       });
     }
     const body = (await res.json()) as { code?: number; result?: IdentityPubkey };

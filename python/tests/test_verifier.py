@@ -175,6 +175,73 @@ def test_resolve_key_raises_phoenixkey_error_on_404_with_key_hint():
     assert ei.value.user_message_key == "errors.not_found"
 
 
+# Real server envelopes (measured on api.phoenixkey.me; backend PR #755):
+# a DID missing its 64-hex segment gets 400 code 2094, an unknown DID/key gets
+# 404 code 3002. The SDK must keep both apart (issue #47).
+_MSG_2094 = "DID is missing its 64-hex segment; send the full did:phoenix:<13 chars>:<64 hex>"
+_MSG_3002 = "Authorized key not found"
+
+
+def _serve_error(status, body):
+    return lambda url, headers: HttpResponse(status, body)
+
+
+def test_lookup_error_keeps_server_code_2094_and_message():
+    body = json.dumps({"code": 2094, "message": _MSG_2094}).encode()
+    v = PhoenixKeyVerifier("https://x/api/v1", fetch=_serve_error(400, body))
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.resolve_key("did:phoenix:aaaaaaaaaaaaa")
+    assert ei.value.status == 400
+    assert ei.value.code == "resolve_failed"  # string code keeps its old meaning
+    assert ei.value.raw_code == 2094
+    assert ei.value.message == _MSG_2094  # the server's sentence, verbatim
+
+
+def test_lookup_error_keeps_server_code_3002_and_message():
+    body = json.dumps({"code": 3002, "message": _MSG_3002}).encode()
+    v = PhoenixKeyVerifier("https://x/api/v1", fetch=_serve_error(404, body))
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.resolve_pubkey("did:phoenix:aaaaaaaaaaaaa:" + "0" * 64)
+    assert ei.value.status == 404
+    assert ei.value.code == "resolve_failed"
+    assert ei.value.raw_code == 3002
+    assert ei.value.message == _MSG_3002
+
+
+def test_verify_intent_reason_carries_the_server_message():
+    body = json.dumps({"code": 2094, "message": _MSG_2094}).encode()
+    v = PhoenixKeyVerifier("https://x/api/v1", fetch=_serve_error(400, body), clock=lambda: 100)
+    res = v.verify_intent(
+        user_did="did:phoenix:aaaaaaaaaaaaa",
+        intent={"type": "T", "timestamp": 100},
+        signature="00",
+    )
+    assert res.valid is False
+    assert res.reason == f"resolve_failed: {_MSG_2094}"
+
+
+def test_lookup_error_non_json_body_keeps_old_behaviour():
+    # Same as before: no extra error, no invented code.
+    v = PhoenixKeyVerifier("https://x/api/v1", fetch=_serve_error(400, b"<html>Bad Request</html>"))
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.resolve_key("did:a")
+    assert ei.value.status == 400
+    assert ei.value.code == "resolve_failed"
+    assert ei.value.raw_code is None
+    assert ei.value.message == "PhoenixKey pubkey lookup failed: 400"
+
+
+def test_lookup_error_json_without_numeric_code_invents_nothing():
+    body = json.dumps({"code": "oops", "message": "boom"}).encode()
+    v = PhoenixKeyVerifier("https://x/api/v1", fetch=_serve_error(500, body))
+    with pytest.raises(PhoenixKeyError) as ei:
+        v.resolve_key("did:a")
+    assert ei.value.status == 500
+    assert ei.value.code == "resolve_failed"
+    assert ei.value.raw_code is None
+    assert ei.value.message == "PhoenixKey pubkey lookup failed: 500"
+
+
 def test_resolve_pubkey_gates():
     pub = "02" + "22" * 32
 
