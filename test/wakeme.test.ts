@@ -34,18 +34,50 @@ function mod(token: string | null = TOKEN) {
 }
 
 describe("WakemeModule — keyless-vault routes live under /wakeme", () => {
-  it("build hits /wakeme/build", async () => {
-    mockOk();
-    await mod().buildGetLamp({ wallet_address: "addr_test1abc" });
-    expect(calls[0]).toBe(`${BASE}/wakeme/build`);
+  it("activation build POSTs /wakeme/activation/build with Bearer and the camelCase body", async () => {
+    const f = mockOk({ batchId: "b1", txs: [] });
+    const out = await mod().buildActivation({ userDid: "did:phoenix:x:y", acceptKinds: ["grant_spend"] });
+    expect(calls[0]).toBe(`${BASE}/wakeme/activation/build`);
+    const init = f.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(String(init.body))).toEqual({
+      userDid: "did:phoenix:x:y",
+      acceptKinds: ["grant_spend"],
+    });
+    expect(out.batchId).toBe("b1");
   });
 
-  it("submit hits /wakeme/submit and sends snake_case signed_tx_cbor", async () => {
-    const f = mockOk();
-    await mod().submitGetLamp("deadbeef");
-    expect(calls[0]).toBe(`${BASE}/wakeme/submit`);
+  it("activation build works without eligibilityTicket (optional) and sends it when given", async () => {
+    const f = mockOk({});
+    await mod().buildActivation({ userDid: "d" });
+    expect(JSON.parse(String((f.mock.calls[0][1] as RequestInit).body))).toEqual({ userDid: "d" });
+    const ticket = {
+      v: 1, program: "RING", eligible: true, exp: 9, ownerCommit: "aa", bodyCbor: "bb", sig: "cc", kid: "k",
+    };
+    await mod().buildActivation({ userDid: "d", eligibilityTicket: ticket });
+    expect(JSON.parse(String((f.mock.calls[1][1] as RequestInit).body)).eligibilityTicket).toEqual(ticket);
+  });
+
+  it("activation submit POSTs /wakeme/activation/submit with batchId + witnesses (camelCase)", async () => {
+    const f = mockOk({ batchId: "b1", state: "SUBMITTING" });
+    const req = {
+      batchId: "b1",
+      witnesses: [{ kind: "vault_open", bodyHash: "ab".repeat(32), witnessSetCbor: "a100" }],
+    };
+    const out = await mod().submitActivation(req);
+    expect(calls[0]).toBe(`${BASE}/wakeme/activation/submit`);
     const init = f.mock.calls[0][1] as RequestInit;
-    expect(JSON.parse(String(init.body))).toEqual({ signed_tx_cbor: "deadbeef" });
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(String(init.body))).toEqual(req);
+    expect(out).toEqual({ batchId: "b1", state: "SUBMITTING" });
+  });
+
+  it("the standalone GetLAMP build/submit methods were removed", () => {
+    // Service answers 404 on both; the only door is /wakeme/activation/*.
+    const m = mod() as unknown as Record<string, unknown>;
+    expect(m.buildGetLamp).toBeUndefined();
+    expect(m.submitGetLamp).toBeUndefined();
   });
 
   it("vault status / magic / pot / gen-entry hit their /wakeme paths", async () => {
@@ -82,7 +114,10 @@ describe("WakemeModule — keyless-vault routes live under /wakeme", () => {
   it("refuses to call an authenticated route with no session", async () => {
     mockOk();
     await expect(
-      mod(null).buildGetLamp({ wallet_address: "addr_test1abc" }),
+      mod(null).buildActivation({ userDid: "d" }),
+    ).rejects.toThrow("Not authenticated");
+    await expect(
+      mod(null).submitActivation({ batchId: "b", witnesses: [] }),
     ).rejects.toThrow("Not authenticated");
     expect(calls).toHaveLength(0);
   });
@@ -172,17 +207,6 @@ describe("wire keys match what the backend actually serialises", () => {
     const p = await mod().getPotStatus();
     expect(p.current_dlamp).toBe(500);
     expect((p as unknown as Record<string, unknown>).current_d_lamp).toBeUndefined();
-  });
-
-  it("build response carries every required signer, not just the first", async () => {
-    mockOk({ required_signer_key_hashes: ["controller_pkh", "device_pkh"] });
-    const b = await mod().buildGetLamp({ wallet_address: "addr_test1abc" });
-    // GetLAMP needs both; signing only the first yields a chain-rejected tx
-    // whose error does not name the missing key (Issue #282).
-    expect(b.required_signer_key_hashes).toEqual(["controller_pkh", "device_pkh"]);
-    expect(
-      (b as unknown as Record<string, unknown>).required_signer_key_hash,
-    ).toBeUndefined();
   });
 });
 

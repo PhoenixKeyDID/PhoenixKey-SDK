@@ -293,15 +293,18 @@ const pot = await phoenix.wakeme.getPotStatus();
 // → { pot_balance_lamp: "…", current_dlamp, d_cap, scale, saturated }
 //   note: `current_dlamp`, not `current_d_lamp` — see the type's doc comment
 
-// 2. build the unsigned tx that moves D LAMP from the pot into the user's vault
-const build = await phoenix.wakeme.buildGetLamp({
-  wallet_address: userWalletAddress,
-});
-// → { unsigned_tx_cbor, required_signer_key_hashes: […], vault_address, d_lamp, … }
-//   sign with EVERY hash in the array — GetLAMP needs two
+// 2. build the activation batch. Each person activates Wakeme exactly ONCE, in the
+//    DID-creation batch; there is no standalone GetLAMP call any more.
+//    `eligibilityTicket` is optional (the service asks Knowme for the RING ticket itself).
+const batch = await phoenix.wakeme.buildActivation({ userDid });
+// → { batchId, network, n, expiresAtMs, txs: [{ index, kind, unsignedTxCbor, bodyHash, … }], ringStatus }
+//   wire keys of this route are camelCase (not snake_case)
 
-// 3. sign `unsigned_tx_cbor` in the Enclave, then hand it back
-const { cardano_tx_hash } = await phoenix.wakeme.submitGetLamp(signedCborHex);
+// 3. sign every tx in the Enclave, then hand all witnesses back in one call
+const { batchId, state } = await phoenix.wakeme.submitActivation({
+  batchId: batch.batchId,
+  witnesses: batch.txs.map((t) => ({ kind: t.kind, bodyHash: t.bodyHash, witnessSetCbor: signInEnclave(t) })),
+});
 
 // 4. dashboard
 const vault = await phoenix.wakeme.getVaultStatus(userDid);
