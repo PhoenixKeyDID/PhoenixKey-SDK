@@ -2,6 +2,18 @@
 
 Dạng đánh số: trước 1.0, thay đổi phá vỡ tương thích tăng số minor (tiền lệ: 0.6.1 → 0.7.0, #34).
 
+## Chưa phát hành
+
+### Gỡ (thay đổi phá vỡ tương thích)
+
+- Gỡ `WakemeModule.buildGetLamp()` và `submitGetLamp()` (hai đường lẻ `build` và `submit` ngay dưới `/wakeme/`, không có đoạn `activation/`) cùng hai kiểu `WakemeBuildRequest`, `WakemeBuildResponse` khỏi `src/wakeme.ts` và khỏi export của gói. `WakemeSubmitResponse` giữ lại (còn dùng cho `repinSubmit`).
+
+### Thêm
+
+- Added: `WakemeModule.buildActivation()` / `submitActivation()` (`POST /wakeme/activation/build`, `/wakeme/activation/submit`). Kiểu: `ActivationBuildRequest`, `ActivationBuildResponse`, `ActivationSubmitRequest`, `ActivationSubmitResponse`, `ActivationEligibilityTicket`, `ActivationBatchTx`, `ActivationOutRef`, `ActivationTxSummary`, `ActivationRingStatus`, `ActivationWitness`, `ActivationPresence`. Khoá trên dây là camelCase. `eligibilityTicket` tuỳ chọn.
+
+**Vì sao.** Mỗi người chỉ kích hoạt Wakeme một lần, trong lô tạo DID; máy chủ gỡ hai đường lẻ (trả 404). Lối duy nhất là `/wakeme/activation/*`. Đường `/wakeme/repin/*` và `/wakeme/vault/*` giữ nguyên.
+
 ## 0.9.1
 
 ### Thêm

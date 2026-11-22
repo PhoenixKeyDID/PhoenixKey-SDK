@@ -24,7 +24,7 @@
  *
  * ### The two phases
  *
- *   1. **Daily** (days 1…1001) — `buildGetLamp()` moves `D = min(1001,
+ *   1. **Daily** (days 1…1001) — `buildActivation()` (the DID-creation batch) moves `D = min(1001,
  *      ⌊pot / 1_000_000⌋)` LAMP from the pot into the user's vault as
  *      `conditional_lamp` (= 1001 · `d_unit`). Nothing settles during this
  *      phase and nothing is taken back: there is no nightly reclaim. Locked LAMP
@@ -74,9 +74,9 @@
  *
  * ## Transaction building
  *
- * The SDK does **not** build or parse redeemer CBOR. `buildGetLamp()` returns
- * an unsigned transaction the server assembled; the client signs it in the
- * Enclave and hands it back to `submitGetLamp()`. The redeemer indices are
+ * The SDK does **not** build or parse redeemer CBOR. `buildActivation()` returns
+ * unsigned transactions the server assembled; the client signs them in the
+ * Enclave and hands the witnesses back to `submitActivation()`. The redeemer indices are
  * pinned in {@link WAKEME_SPEND_REDEEMER_INDEX} and
  * {@link WAKEME_MINT_REDEEMER_INDEX} so that anything encoding them by hand
  * has one place to check against; the encoders themselves live in `rust_core`
@@ -120,54 +120,107 @@ import { createFetcher, FetchOptions } from "./fetcher";
 import { ResilientSSE, SseOptions } from "./sse";
 import { PhoenixKeyError, SseHandlers } from "./types";
 
-// ─── Keyless vault v3 — GetLAMP into the vault ────────────────────────────────────────
+// ─── One-tap activation batch — POST /wakeme/activation/{build,submit} ───────────────
+//
+// Each person activates Wakeme exactly ONCE, inside the DID-creation batch. The standalone
+// bare build/submit pair directly under `/wakeme/` was removed from the service (it answers 404).
+//
+// ⚠ Wire keys here are **camelCase**, not snake_case: the activation DTOs override the
+// service-wide `SNAKE_CASE` with `LowerCamelCaseStrategy` (Wakeme service,
+// `ActivationBatchDtos`), because the SuperApp contract pins `batchId`, `unsignedTxCbor`,
+// `witnessSetCbor`. Repin / vault routes stay snake_case.
 
-export type WakemeBuildRequest = {
-  /**
-   * Bech32 Shelley address of the user's wallet. This is **not** where the
-   * vault lives: every vault sits at the one shared `wakeme_vault` script
-   * address (see `vault_address` in {@link WakemeBuildResponse}).
-   */
-  wallet_address: string;
-  /** Optional `blake2b_256(did ‖ salt)` hex; the server derives one if absent. */
-  did_commit?: string;
+/** Eligibility ticket signed by Knowme (Ed25519 over `bodyCbor`). */
+export type ActivationEligibilityTicket = {
+  v: number;
+  program: string;
+  eligible: boolean;
+  exp: number;
+  ownerCommit: string;
+  bodyCbor: string;
+  sig: string;
+  kid: string;
 };
 
-export type WakemeBuildResponse = {
-  unsigned_tx_cbor: string;
+/** Body of `POST /wakeme/activation/build`. */
+export type ActivationBuildRequest = {
+  /** The caller's own DID (the service authorises by the Bearer's DID). */
+  userDid: string;
   /**
-   * **Every** key the transaction requires, in the order the builder added
-   * them. GetLAMP needs **two**: `controller_pkh` then `device_pkh`.
-   *
-   * ⚠ Replaces the singular `required_signer_key_hash`, which carried only the
-   * first of the two. Signing with one key produces a transaction the chain
-   * rejects, and the rejection does not say which key is missing — nor can the
-   * client infer it, since a DID may have several authorised device keys and
-   * the server's preflight already picked one. The backend dropped the
-   * singular field outright rather than keep a wrong name beside a right one
-   * (Issue #282); an SDK type still promising it resolves to `undefined`.
+   * Optional. The service requests the RING ticket from Knowme itself with the
+   * caller's Bearer, so this is no longer required; send it when you already hold one.
    */
-  required_signer_key_hashes: string[];
-  vault_address: string;
-  d_lamp: number;
-  /** Smallest unit (oildrop) — JSON string, do not parse as a JS number. */
-  d_oildrop: string;
-  /** Pot total in LAMP — JSON string, do not parse as a JS number. */
-  pot_balance_lamp: string;
+  eligibilityTicket?: ActivationEligibilityTicket;
   /**
-   * The transaction's `validFrom` **slot** — a build-time bound on the
-   * unsigned transaction, nothing more.
-   *
-   * ⚠ Not to be confused with {@link WakemeVaultStatus.vest_start_ms}, which
-   * is the vault clock's zero point. They differ in **both** unit and origin
-   * (slots vs POSIX milliseconds; ~720 slot ↔ 720000 ms), so neither converts
-   * into the other by scaling. The near-identical names are the wire contract
-   * the backend already serves (`vestStartSlot` → `vest_start_slot`), so they
-   * are not renamed here — a one-sided rename would break every caller.
+   * Extra tx `kind`s this client can handle beyond the seven base kinds. The service
+   * appends the `grant_spend` tx only when this contains `"grant_spend"` (exact,
+   * case-sensitive).
    */
-  vest_start_slot: number;
-  phase1_days: number;
-  ttl_slot: number;
+  acceptKinds?: string[];
+};
+
+export type ActivationOutRef = { txId: string; index: number };
+
+/** Every amount is a non-negative decimal integer string in the smallest unit. */
+export type ActivationTxSummary = {
+  userLovelaceOut: string;
+  lampToVault: string;
+  magicToUser: string;
+  feeLovelace: string;
+  feePayer: string;
+};
+
+export type ActivationBatchTx = {
+  index: number;
+  kind: string;
+  unsignedTxCbor: string;
+  bodyHash: string;
+  spends: ActivationOutRef[];
+  references: ActivationOutRef[];
+  summary: ActivationTxSummary;
+};
+
+/** RING part of the batch. Every key is present, `null` when not applicable. */
+export type ActivationRingStatus = {
+  state: "DELIVERED" | "SKIPPED" | (string & {});
+  reason: string | null;
+  code: number | null;
+  retryAtMs: number | null;
+  fundId?: string | null;
+  vaultId?: string | null;
+};
+
+export type ActivationBuildResponse = {
+  batchId: string;
+  network: number;
+  n: number;
+  expiresAtMs: number;
+  txs: ActivationBatchTx[];
+  ringStatus: ActivationRingStatus | null;
+};
+
+export type ActivationWitness = {
+  kind: string;
+  bodyHash: string;
+  witnessSetCbor: string;
+};
+
+export type ActivationPresence = {
+  prefix: string;
+  fieldsHex: string;
+  signature: string;
+};
+
+/** Body of `POST /wakeme/activation/submit`: one signature round for the whole batch. */
+export type ActivationSubmitRequest = {
+  batchId: string;
+  witnesses: ActivationWitness[];
+  presence?: ActivationPresence;
+};
+
+export type ActivationSubmitResponse = {
+  batchId: string;
+  state: string;
 };
 
 export type WakemeSubmitResponse = {
@@ -244,7 +297,6 @@ export type WakemeActivityGate = {
  * wire contract the backend already serves — renaming them in the SDK alone
  * would break every caller. Read the unit off this doc, never off the suffix.
  *
- * @see WakemeBuildResponse.d_oildrop — same unit, honest name.
  */
 export type WakemeVaultStatus = {
   did: string;
@@ -291,8 +343,7 @@ export type WakemeVaultStatus = {
    * Nightly rate `D = WakemeUsageRight / 1001` — fixed per vault from genesis,
    * invariant across every redeemer.
    *
-   * **Unit: OILDROP.** No suffix says so; the sibling field `d_oildrop` on
-   * {@link WakemeBuildResponse} carries the same unit under an honest name.
+   * **Unit: OILDROP.** No suffix says so; the unit is oildrop throughout.
    */
   d_unit: number;
   /**
@@ -423,29 +474,27 @@ export class WakemeModule {
     return token;
   }
 
-  // ── Keyless vault v3 ────────────────────────────────────────────────────────
+  // ── One-tap activation batch ───────────────────────────────────────────────
 
   /**
-   * Step 1 — ask the server for an unsigned transaction that moves `D` LAMP
-   * from the pot into the user's vault (one per DID, at the shared vault script
-   * address) and locks it as `conditional_lamp`.
-   *
-   * One DID gets one vault; a second call is guarded server-side. Sign the
-   * returned CBOR in the Enclave, then pass it to {@link submitGetLamp}.
+   * Step 1 — build the activation batch (unsigned txs + summary) for the caller's DID.
+   * This is the ONLY way to activate Wakeme: once per person, in the DID-creation batch.
+   * Sign every tx in the Enclave, then pass the witnesses to {@link submitActivation}.
+   * `eligibilityTicket` is optional; send it when you already hold one.
    */
-  async buildGetLamp(req: WakemeBuildRequest): Promise<WakemeBuildResponse> {
-    return this.fetch<WakemeBuildResponse>("/wakeme/build", {
+  async buildActivation(req: ActivationBuildRequest): Promise<ActivationBuildResponse> {
+    return this.fetch<ActivationBuildResponse>("/wakeme/activation/build", {
       method: "POST",
       body: JSON.stringify(req),
       bearerToken: this.requireToken(),
     } as FetchOptions);
   }
 
-  /** Step 2 — hand back the Enclave-signed CBOR for submission to the chain. */
-  async submitGetLamp(signedTxCbor: string): Promise<WakemeSubmitResponse> {
-    return this.fetch<WakemeSubmitResponse>("/wakeme/submit", {
+  /** Step 2 — hand back the witnesses for the whole batch; the server submits in order. */
+  async submitActivation(req: ActivationSubmitRequest): Promise<ActivationSubmitResponse> {
+    return this.fetch<ActivationSubmitResponse>("/wakeme/activation/submit", {
       method: "POST",
-      body: JSON.stringify({ signed_tx_cbor: signedTxCbor }),
+      body: JSON.stringify(req),
       bearerToken: this.requireToken(),
     } as FetchOptions);
   }
@@ -469,7 +518,7 @@ export class WakemeModule {
 
   /**
    * Repin step 2 — hand back the signed CBOR (controller + device); Feecover
-   * signs the fee. Same body and result shape as {@link submitGetLamp}.
+   * signs the fee. Body `{signed_tx_cbor}`; result is {@link WakemeSubmitResponse}.
    */
   async repinSubmit(signedTxCbor: string): Promise<WakemeSubmitResponse> {
     return this.fetch<WakemeSubmitResponse>("/wakeme/repin/submit", {
@@ -558,12 +607,12 @@ export class WakemeModule {
   }
 
   /**
-   * @deprecated Retired flow. Use {@link buildGetLamp}.
+   * @deprecated Retired flow. Use {@link buildActivation}.
    *
    * Initiate the 200,000₫ activation package purchase through a Genie agent.
    */
   async initiate(_walletAddress: string): Promise<ActivationSession> {
-    throw WakemeModule.retired("initiate", "buildGetLamp()");
+    throw WakemeModule.retired("initiate", "buildActivation()");
   }
 
   /** @deprecated Retired flow. Use {@link getVaultStatus}. */
@@ -603,12 +652,12 @@ export class WakemeModule {
     );
   }
 
-  /** @deprecated Retired flow. Use {@link submitGetLamp}. */
+  /** @deprecated Retired flow. Use {@link submitActivation}. */
   async submitTx(
     _activationId: string,
     _signedTxCbor: string,
   ): Promise<ActivationSubmitTxResponse> {
-    throw WakemeModule.retired("submitTx", "submitGetLamp()");
+    throw WakemeModule.retired("submitTx", "submitActivation()");
   }
 }
 
